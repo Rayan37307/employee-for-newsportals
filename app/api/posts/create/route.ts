@@ -53,12 +53,42 @@ export async function POST(req: Request) {
         // If it returns items, we can pass the specific item data in the body or refetch.
         // Passing item data in body is easiest for MVP.
 
-        let { newsItem } = body
+        let { newsItem, scheduledFor } = body
         if (!newsItem) {
-            // Fetch from source again and find by ID/Link?
-            // Too complex. Let's require newsItem in body.
             return NextResponse.json({ error: 'Missing newsItem data' }, { status: 400 })
         }
+
+        // 2.5 Scheduling Logic
+        if (scheduledFor) {
+            const date = new Date(scheduledFor)
+            if (date > new Date()) {
+                // Determine caption for storage
+                // @ts-ignore
+                const captionField = mapping.sourceFields._social_caption_field
+                const caption = (captionField && newsItem[captionField]) ? String(newsItem[captionField]) : (newsItem.title || 'Breaking News')
+
+                // Create Queued Records
+                const newsCard = await db.newsCard.create({
+                    data: {
+                        imageUrl: 'https://placeholder.com/pending.png',
+                        status: 'QUEUED',
+                        sourceData: newsItem,
+                        templateId: template.id,
+                        dataMappingId: mapping.id,
+                        posts: {
+                            create: {
+                                socialAccountId: socialAccount.id,
+                                content: caption,
+                                status: 'QUEUED',
+                                scheduledFor: date
+                            }
+                        }
+                    }
+                })
+                return NextResponse.json({ success: true, message: 'Scheduled', post: newsCard })
+            }
+        }
+
 
         // 3. Generate Image
         const imageBuffer = await generateCardImage({

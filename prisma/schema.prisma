@@ -224,6 +224,7 @@ model DataMapping {
 
 enum CardStatus {
   DRAFT
+  QUEUED
   GENERATED
   POSTED
   FAILED

@@ -8,9 +8,16 @@ export async function PUT(req: Request) {
         if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
         const body = await req.json()
-        const { name } = body
 
-        if (!name) return NextResponse.json({ error: 'Name required' }, { status: 400 })
+        // Zod validation
+        const { userProfileSchema } = await import('@/lib/validation')
+        const validation = userProfileSchema.safeParse(body)
+
+        if (!validation.success) {
+            return NextResponse.json({ error: 'Invalid input', details: validation.error.format() }, { status: 400 })
+        }
+
+        const { name } = validation.data
 
         const updated = await db.user.update({
             where: { id: user.id },
