@@ -2,17 +2,21 @@ import { extract } from '@extractus/article-extractor'
 import Parser from 'rss-parser'
 import { JSDOM } from 'jsdom'
 import { Page, Browser } from 'playwright'
-import {SitemapHandler} from "lib/news-source-manager";
-import {logging} from "googleapis/build/src/googleapis";
+import { UniversalNewsAgent, NewsArticle } from './universal-news-agent';
 
 export interface NewsItem {
   title: string
   content?: string
   summary?: string
+  description?: string
   url: string
   publishedAt?: Date
+  published_at?: string
   author?: string
   image?: string
+  category?: string
+  language?: string
+  source?: string
   tags?: string[]
 }
 
@@ -377,6 +381,162 @@ export class RSSDiscoveryHandler extends NewsSourceHandler {
   }
 }
 
+export class WebScraperHandler extends NewsSourceHandler {
+    canHandle(type: string, config: any): boolean {
+        return type === 'SCRAPE';
+    }
+
+    async fetch(config: any): Promise<NewsSourceResult> {
+        const browser = await PlaywrightBrowser.getBrowser();
+        const page = await browser.newPage();
+        try {
+            await page.goto(config.url, { waitUntil: 'networkidle' });
+            const links = await getLinks(page, config.url);
+            const items: NewsItem[] = [];
+            for (const link of links) {
+                try {
+                    const articlePage = await browser.newPage();
+                    await articlePage.goto(link, { waitUntil: 'networkidle' });
+                    const content = await articlePage.content();
+                    if(!content) continue;
+                    const article = await extract(content);
+                    if (!article) continue;
+                    let articles = [];
+                    if(Array.isArray(article)){
+                        articles = article;
+                    } else {
+                        articles.push(article);
+                    }
+
+                    for(const art of articles){
+                        items.push({
+                            title: art.title || 'Untitled',
+                            content: art.content || '',
+                            summary: art.description || '',
+                            url: art.url || link,
+                            publishedAt: art.published ? new Date(art.published) : undefined,
+                            author: art.author || '',
+                            image: art.image || '',
+                            tags: []
+                        });
+                    }
+
+                    await articlePage.close();
+                } catch (e: any) {
+                    console.error(`Error scraping ${link}: ${e.message}`);
+                }
+            }
+            return {
+                items,
+                success: true,
+                method: 'scraping',
+            };
+        } catch (e: any) {
+            return {
+                items: [],
+                success: false,
+                method: 'scraping',
+                error: e.message,
+            };
+        } finally {
+            await page.close();
+        }
+    }
+}
+class PlaywrightBrowser {
+    private static browser: Browser;
+
+    static async getBrowser() {
+        if (!this.browser) {
+            const { chromium } = require('playwright');
+            this.browser = await chromium.launch();
+        }
+        return this.browser;
+    }
+
+    static async closeBrowser() {
+        if (this.browser) {
+            await this.browser.close();
+        }
+    }
+}
+
+// Universal News Agent Handler
+export class UniversalNewsHandler extends NewsSourceHandler {
+  canHandle(type: string, config: any): boolean {
+    return type === 'UNIVERSAL_AGENT' || type === 'AUTO';
+  }
+
+  async fetch(config: any): Promise<NewsSourceResult> {
+    try {
+      const agent = new UniversalNewsAgent({
+        url: config.url || config.rssUrl,
+        maxConcurrency: config.maxConcurrency || 3,
+        cacheTimeout: config.cacheTimeout || 3600000,
+        userAgent: config.userAgent || 'News-Agent/1.0'
+      });
+
+      const result = await agent.fetchNews();
+      await agent.cleanup();
+
+      if (!result.success) {
+        return {
+          items: [],
+          success: false,
+          method: 'api',
+          error: result.error || 'Universal agent failed to fetch news'
+        };
+      }
+
+      // Convert NewsArticle to NewsItem
+      const items: NewsItem[] = result.articles.map((article: NewsArticle) => ({
+        title: article.title,
+        content: article.content,
+        description: article.description,
+        summary: article.description,
+        url: article.url,
+        publishedAt: new Date(article.published_at),
+        published_at: article.published_at,
+        author: article.author,
+        image: article.image,
+        category: article.category,
+        language: article.language,
+        source: article.source,
+        tags: [article.category].filter(Boolean) // Convert category to tags array
+      }));
+
+      return {
+        items,
+        success: true,
+        method: result.method === 'sitemap' ? 'scraping' : result.method
+      };
+    } catch (error) {
+      return {
+        items: [],
+        success: false,
+        method: 'api',
+        error: error instanceof Error ? error.message : 'Unknown error in universal agent'
+      };
+    }
+  }
+}
+
+async function getLinks(page: Page, baseUrl: string) {
+    const links = await page.evaluate(() => {
+        const anchors = Array.from(document.querySelectorAll('a'));
+        return anchors.map(anchor => anchor.href);
+    });
+    return links.map(link => getAbsoluteUrl(link, baseUrl)).filter(link => link.startsWith(baseUrl));
+}
+
+function getAbsoluteUrl(url: string, baseUrl: string) {
+    try {
+        return new URL(url, baseUrl).href;
+    } catch (e) {
+        return '';
+    }
+}
+
 // Main News Source Manager
 export class NewsSourceManager {
   private handlers: NewsSourceHandler[] = []
@@ -387,7 +547,8 @@ export class NewsSourceManager {
       new RSSDiscoveryHandler(),
       new SitemapHandler(),
       new ArticleExtractionHandler(),
-      new WebScraperHandler()
+      new WebScraperHandler(),
+      new UniversalNewsHandler()
     ]
   }
 
@@ -429,6 +590,13 @@ export class NewsSourceManager {
         }
     }
 
+    if(type === 'UNIVERSAL_AGENT'){
+        const universalHandler = this.handlers.find(h => h instanceof UniversalNewsHandler)
+        if(universalHandler){
+            return universalHandler.fetch(config)
+        }
+    }
+
     // Try specific handlers
     for (const handler of this.handlers) {
       if (handler.canHandle(type, config)) {
@@ -446,96 +614,4 @@ export class NewsSourceManager {
       error: 'No suitable handler found or all handlers failed'
     }
   }
-}
-export class WebScraperHandler extends NewsSourceHandler {
-    async canHandle(type: string, config: any) {
-        return type === 'SCRAPE';
-    }
-
-    async fetch(config: any) {
-        const browser = await PlaywrightBrowser.getBrowser();
-        const page = await browser.newPage();
-        try {
-            await page.goto(config.url, { waitUntil: 'networkidle' });
-            const links = await getLinks(page, config.url);
-            const items = [];
-            for (const link of links) {
-                try {
-                    const articlePage = await browser.newPage();
-                    await articlePage.goto(link, { waitUntil: 'networkidle' });
-                    const content = await articlePage.content();
-                    if(!content) continue;
-                    const article = await extract(content);
-                    if (!article) continue;
-                    let articles = [];
-                    if(Array.isArray(article)){
-                        articles = article;
-                    } else {
-                        articles.push(article);
-                    }
-
-                    for(const art of articles){
-                        items.push({
-                            title: art.title,
-                            content: art.content,
-                            url: art.url,
-                            publishedAt: art.published,
-                            author: art.author,
-                            image: art.image,
-                        });
-                    }
-
-                    await articlePage.close();
-                } catch (e: any) {
-                    logging.error(`Error scraping ${link}: ${e.message}`);
-                }
-            }
-            return {
-                items,
-                success: true,
-                method: 'scraping',
-            };
-        } catch (e: any) {
-            return {
-                items: [],
-                success: false,
-                method: 'scraping',
-                error: e.message,
-            };
-        } finally {
-            await page.close();
-        }
-    }
-}
-class PlaywrightBrowser {
-    private static browser: Browser;
-
-    static async getBrowser() {
-        if (!this.browser) {
-            const { chromium } = require('playwright');
-            this.browser = await chromium.launch();
-        }
-        return this.browser;
-    }
-
-    static async closeBrowser() {
-        if (this.browser) {
-            await this.browser.close();
-        }
-    }
-}
-async function getLinks(page: Page, baseUrl: string) {
-    const links = await page.evaluate(() => {
-        const anchors = Array.from(document.querySelectorAll('a'));
-        return anchors.map(anchor => anchor.href);
-    });
-    return links.map(link => getAbsoluteUrl(link, baseUrl)).filter(link => link.startsWith(baseUrl));
-}
-
-function getAbsoluteUrl(url: string, baseUrl: string) {
-    try {
-        return new URL(url, baseUrl).href;
-    } catch (e) {
-        return '';
-    }
 }

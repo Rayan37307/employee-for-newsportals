@@ -3,7 +3,7 @@
 import { DashboardLayout } from '@/components/dashboard-layout'
 import { useEffect, useState, use } from 'react'
 import { useRouter } from 'next/navigation'
-import { Save, ArrowLeft, Database, Layout } from 'lucide-react'
+import { Save, ArrowLeft, Database, Layout, RefreshCw } from 'lucide-react'
 import { PreviewModal } from '@/components/preview-modal'
 
 // Types
@@ -40,8 +40,39 @@ export default function MappingPage({ params }: { params: Promise<{ id: string }
     const [saving, setSaving] = useState(false)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
 
-    // RSS Fields available to map
-    const rssFields = ['title', 'content', 'contentSnippet', 'link', 'pubDate', 'isoDate']
+    // Fields available to map from Universal News Agent
+    const availableFields = ['title', 'description', 'content', 'url', 'image', 'author', 'published_at', 'category', 'language', 'source']
+
+    const handleUniversalFetchNow = async () => {
+        if (!sourceId) return;
+
+        try {
+            const res = await fetch(`/api/sources/${sourceId}/universal-fetch`, { method: 'POST' });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.sampleItem) {
+                    setLatestItem(data.sampleItem); // Update the displayed item
+                    alert(`Fetched ${data.rawArticles.length} items with full data structure!`);
+                } else {
+                    alert("Fetched, but no sample item available");
+                }
+            } else {
+                alert("Universal fetch failed, falling back to standard fetch");
+                // Fallback to standard fetch
+                const fallbackRes = await fetch(`/api/sources/${sourceId}/fetch`, { method: 'POST' });
+                if (fallbackRes.ok) {
+                    const fallbackData = await fallbackRes.json();
+                    if (fallbackData.items && fallbackData.items.length > 0) {
+                        setLatestItem(fallbackData.items[0]);
+                        alert(`Fetched ${fallbackData.items.length} items with standard fetch!`);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("Universal fetch error:", error);
+            alert("Error during universal fetch");
+        }
+    }
 
     useEffect(() => {
         loadData()
@@ -58,12 +89,32 @@ export default function MappingPage({ params }: { params: Promise<{ id: string }
             const foundSource = allSources.find((s: any) => s.id === sourceId)
             setSource(foundSource)
 
-            // 2. Fetch Latest RSS Item
-            const fetchRes = await fetch(`/api/sources/${sourceId}/fetch`, { method: 'POST' })
-            if (fetchRes.ok) {
-                const fetchData = await fetchRes.json()
-                if (fetchData.items && fetchData.items.length > 0) {
-                    setLatestItem(fetchData.items[0])
+            // 2. Fetch Latest Item using Universal News Agent for full data structure
+            try {
+                const universalFetchRes = await fetch(`/api/sources/${sourceId}/universal-fetch`, { method: 'POST' })
+                if (universalFetchRes.ok) {
+                    const universalData = await universalFetchRes.json()
+                    if (universalData.sampleItem) {
+                        setLatestItem(universalData.sampleItem) // This has the full Universal News Agent structure
+                    }
+                } else {
+                    // Fallback to the original fetch method if universal fetch fails
+                    const fetchRes = await fetch(`/api/sources/${sourceId}/fetch`, { method: 'POST' })
+                    if (fetchRes.ok) {
+                        const fetchData = await fetchRes.json()
+                        if (fetchData.items && fetchData.items.length > 0) {
+                            setLatestItem(fetchData.items[0])
+                        }
+                    }
+                }
+            } catch (e) {
+                // Fallback to the original fetch method if universal fetch fails
+                const fetchRes = await fetch(`/api/sources/${sourceId}/fetch`, { method: 'POST' })
+                if (fetchRes.ok) {
+                    const fetchData = await fetchRes.json()
+                    if (fetchData.items && fetchData.items.length > 0) {
+                        setLatestItem(fetchData.items[0])
+                    }
                 }
             }
 
@@ -160,6 +211,14 @@ export default function MappingPage({ params }: { params: Promise<{ id: string }
                     </div>
                     <div className="flex items-center gap-2">
                         <button
+                            onClick={() => handleUniversalFetchNow()}
+                            disabled={loading}
+                            className="px-4 py-2 bg-green-600 text-white rounded-lg flex items-center gap-2 disabled:opacity-50 hover:bg-green-700"
+                        >
+                            <RefreshCw className="w-4 h-4" />
+                            Refresh Data
+                        </button>
+                        <button
                             onClick={() => setIsPreviewOpen(true)}
                             disabled={!selectedTemplate || !latestItem}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center gap-2 disabled:opacity-50 hover:bg-blue-700"
@@ -249,8 +308,13 @@ export default function MappingPage({ params }: { params: Promise<{ id: string }
                                                         onChange={(e) => setMapping(prev => ({ ...prev, [idx]: e.target.value }))}
                                                     >
                                                         <option value="">-- Static (No Mapping) --</option>
-                                                        {rssFields.map(field => (
-                                                            <option key={field} value={field}>RSS Item: {field}</option>
+                                                        {availableFields.map(field => (
+                                                            <option key={field} value={field}>
+                                                                {latestItem && latestItem[field] !== undefined
+                                                                    ? `Source Data: ${field}`
+                                                                    : `Source Data: ${field} (not available)`
+                                                                }
+                                                            </option>
                                                         ))}
                                                     </select>
                                                 </div>
@@ -258,7 +322,10 @@ export default function MappingPage({ params }: { params: Promise<{ id: string }
                                                 {/* Preview Value */}
                                                 {mapping[idx] && latestItem && (
                                                     <div className="mt-2 text-xs text-blue-500 bg-blue-500/10 p-2 rounded">
-                                                        Preview: {String(latestItem[mapping[idx]])?.substring(0, 50)}...
+                                                        Preview: {latestItem[mapping[idx]] !== undefined
+                                                            ? String(latestItem[mapping[idx]])?.substring(0, 50) + '...'
+                                                            : 'FIELD NOT AVAILABLE IN SOURCE DATA'
+                                                        }
                                                     </div>
                                                 )}
                                             </div>
@@ -278,8 +345,13 @@ export default function MappingPage({ params }: { params: Promise<{ id: string }
                                                     onChange={(e) => setMapping(prev => ({ ...prev, '_social_caption_field': e.target.value }))}
                                                 >
                                                     <option value="">-- Select Field for Caption --</option>
-                                                    {rssFields.map(field => (
-                                                        <option key={field} value={field}>RSS Item: {field}</option>
+                                                    {availableFields.map(field => (
+                                                        <option key={field} value={field}>
+                                                            {latestItem && latestItem[field] !== undefined
+                                                                ? `Source Data: ${field}`
+                                                                : `Source Data: ${field} (not available)`
+                                                            }
+                                                        </option>
                                                     ))}
                                                 </select>
                                             </div>
@@ -287,7 +359,10 @@ export default function MappingPage({ params }: { params: Promise<{ id: string }
                                                 This field will be used as the caption when posting to social media.
                                                 {latestItem && mapping['_social_caption_field'] && (
                                                     <span className="block mt-1 text-blue-500">
-                                                        Preview: {String(latestItem[mapping['_social_caption_field']])?.substring(0, 100)}...
+                                                        {latestItem[mapping['_social_caption_field']] !== undefined
+                                                            ? `Preview: ${String(latestItem[mapping['_social_caption_field']])?.substring(0, 100)}...`
+                                                            : 'FIELD NOT AVAILABLE IN SOURCE DATA'
+                                                        }
                                                     </span>
                                                 )}
                                             </p>
