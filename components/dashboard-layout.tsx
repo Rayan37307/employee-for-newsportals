@@ -31,10 +31,12 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
     const [sidebarOpen, setSidebarOpen] = useState(false)
     const [showNotif, setShowNotif] = useState(false)
     const [notifications, setNotifications] = useState<any[]>([])
+    const [user, setUser] = useState<{ name?: string | null; email?: string | null } | null>(null)
     const pathname = usePathname()
 
     useEffect(() => {
         loadNotifications()
+        loadUser()
     }, [])
 
     const loadNotifications = async () => {
@@ -42,6 +44,18 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
             const res = await fetch('/api/notifications')
             if (res.ok) {
                 setNotifications(await res.json())
+            }
+        } catch (e) {
+            console.error(e)
+        }
+    }
+
+    const loadUser = async () => {
+        try {
+            const res = await fetch('/api/auth/session')
+            if (res.ok) {
+                const data = await res.json()
+                setUser(data?.user || null)
             }
         } catch (e) {
             console.error(e)
@@ -57,7 +71,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
         }
     }
 
-    const unreadCount = notifications.filter(n => !n.read).length
+    const unreadCount = notifications.filter((n: any) => !n.read).length
 
     return (
         <div className="flex h-screen overflow-hidden bg-background">
@@ -125,8 +139,8 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                     <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-muted/50">
                         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-accent" />
                         <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">User</p>
-                            <p className="text-xs text-muted-foreground truncate">user@example.com</p>
+                            <p className="text-sm font-medium truncate">{user?.name || 'Guest'}</p>
+                            <p className="text-xs text-muted-foreground truncate">{user?.email || 'Sign in to continue'}</p>
                         </div>
                     </div>
                 </div>

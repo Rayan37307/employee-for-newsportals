@@ -138,6 +138,7 @@ enum SourceType {
   RSS
   API
   MANUAL
+  AUTO
 }
 
 model NewsSource {
@@ -149,6 +150,7 @@ model NewsSource {
   // For RSS: { url: string, category?: string }
   // For API: { endpoint: string, apiKey?: string, headers?: object }
   // For Manual: empty object
+  // For AUTO: { url: string, usePuppeteer?: boolean, customSelectors?: object }
   config          Json
   
   // Update settings

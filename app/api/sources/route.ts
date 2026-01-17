@@ -25,20 +25,9 @@ export async function GET() {
 export async function POST(request: Request) {
     try {
         const user = await getCurrentUser()
-        // Helper to ensure we have a developer user if auth is bypassed
-        let userId = user?.id
-        if (!userId) {
-            // Development fallback: find or create dev user
-            const devUser = await prisma.user.upsert({
-                where: { email: 'dev@example.com' },
-                update: {},
-                create: {
-                    email: 'dev@example.com',
-                    name: 'Developer',
-                    role: 'ADMIN'
-                }
-            })
-            userId = devUser.id
+
+        if (!user) {
+            return NextResponse.json({ error: 'Authentication required. Please sign in to create sources.' }, { status: 401 })
         }
 
         const body = await request.json()
@@ -53,22 +42,35 @@ export async function POST(request: Request) {
         if (type === 'RSS') {
             if (!url) return NextResponse.json({ error: 'RSS URL is required' }, { status: 400 })
             config = { url, category }
+        } else if (type === 'AUTO') {
+            if (!url) return NextResponse.json({ error: 'Website URL is required' }, { status: 400 })
+            config = { url, usePuppeteer: false }
+        } else if (type === 'MANUAL') {
+            config = {}
+        } else if (type === 'API') {
+            if (!url) return NextResponse.json({ error: 'API endpoint URL is required' }, { status: 400 })
+            config = { endpoint: url }
         }
+
+        console.log('Creating source:', { name, type, config, userId: user.id })
 
         const source = await prisma.newsSource.create({
             data: {
                 name,
                 type,
                 config,
-                userId,
-                // Default update frequency 60 mins
+                userId: user.id,
                 updateFrequency: 60,
             },
         })
 
+        console.log('Source created:', source.id)
         return NextResponse.json(source, { status: 201 })
     } catch (error) {
         console.error('Error creating source:', error)
-        return NextResponse.json({ error: 'Failed to create source' }, { status: 500 })
+        return NextResponse.json({ 
+            error: 'Failed to create source',
+            details: error instanceof Error ? error.message : String(error)
+        }, { status: 500 })
     }
 }

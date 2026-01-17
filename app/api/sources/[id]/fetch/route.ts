@@ -1,9 +1,7 @@
 import prisma from '@/lib/db'
 import { getCurrentUser } from '@/lib/session'
 import { NextResponse } from 'next/server'
-import Parser from 'rss-parser'
-
-const parser = new Parser()
+import { NewsSourceManager } from '@/lib/news-source-manager'
 
 // POST /api/sources/[id]/fetch - Trigger a fetch
 export async function POST(
@@ -23,30 +21,44 @@ export async function POST(
             return NextResponse.json({ error: 'Source not found' }, { status: 404 })
         }
 
-        if (source.type !== 'RSS') {
-            return NextResponse.json({ error: 'Only RSS sources are currently supported' }, { status: 400 })
+        // Check ownership (unless admin)
+        if (user?.role !== 'ADMIN' && source.userId !== user?.id) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
         }
 
-        const config = source.config as { url: string }
-        if (!config.url) {
-            return NextResponse.json({ error: 'Invalid configuration: URL missing' }, { status: 500 })
+        const manager = new NewsSourceManager()
+        const config = source.config as any
+
+        // Add the source URL if not present
+        if (!config.url && source.type === 'AUTO') {
+            config.url = config.endpoint || config.rssUrl // Fallback for different config formats
         }
 
         try {
-            const feed = await parser.parseURL(config.url)
+            const result = await manager.fetchNewsSource(source.type, config)
 
             // Update source status
+            const updateData: any = {
+                lastFetchedAt: new Date(),
+            }
+
+            if (result.success) {
+                updateData.lastError = null
+            } else {
+                updateData.lastError = result.error || 'Unknown error'
+            }
+
             const updatedSource = await prisma.newsSource.update({
                 where: { id: params.id },
-                data: {
-                    lastFetchedAt: new Date(),
-                    lastError: null,
-                }
+                data: updateData
             })
 
             return NextResponse.json({
                 source: updatedSource,
-                items: feed.items.slice(0, 5)
+                items: result.items.slice(0, 10), // Return up to 10 items
+                method: result.method,
+                success: result.success,
+                error: result.error
             })
 
         } catch (fetchError: any) {
@@ -58,7 +70,10 @@ export async function POST(
                     lastFetchedAt: new Date()
                 }
             })
-            return NextResponse.json({ error: 'Failed to fetch RSS feed' }, { status: 502 })
+            return NextResponse.json({
+                error: 'Failed to fetch news source',
+                details: fetchError.message
+            }, { status: 502 })
         }
 
     } catch (error: any) {
