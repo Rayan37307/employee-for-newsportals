@@ -99,13 +99,13 @@ export default function TemplatesPage() {
                                 Browse and manage your news card templates
                             </p>
                         </div>
-                        <button
-                            onClick={() => router.push('/canvas')}
-                            className="px-6 py-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-2"
-                        >
-                            <Plus className="w-5 h-5" />
-                            Create Template
-                        </button>
+                             <button
+                                 onClick={() => router.push('/canvas')}
+                                 className="px-6 py-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-2"
+                             >
+                                 <Plus className="w-5 h-5" />
+                                 Create Canvas
+                             </button>
                     </div>
 
                     {/* Filters */}
@@ -142,15 +142,15 @@ export default function TemplatesPage() {
                         <div className="text-center py-12">
                             <FileText className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
                             <h3 className="text-lg font-semibold mb-2">No templates found</h3>
-                            <p className="text-muted-foreground mb-6">
-                                Create your first template to get started
-                            </p>
-                            <button
-                                onClick={() => router.push('/canvas')}
-                                className="px-6 py-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                            >
-                                Create Template
-                            </button>
+                             <p className="text-muted-foreground mb-6">
+                                 Create your first canvas to get started
+                             </p>
+                     <button
+                         onClick={() => router.push('/canvas')}
+                         className="px-6 py-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                     >
+                         Create Canvas
+                     </button>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

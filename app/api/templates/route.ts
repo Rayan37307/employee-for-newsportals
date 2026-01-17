@@ -8,6 +8,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const category = searchParams.get('category')
     const isPublic = searchParams.get('public') === 'true'
+    const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : undefined
 
     const templates = await prisma.template.findMany({
       where: {
@@ -26,6 +27,7 @@ export async function GET(request: Request) {
       orderBy: {
         createdAt: 'desc',
       },
+      take: limit,
     })
 
     return NextResponse.json(templates)

@@ -1,277 +1,295 @@
 'use client'
 
-import { useState } from 'react'
-
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { DashboardLayout } from '@/components/dashboard-layout'
-import { CanvasEditor, useCanvas } from '@/components/canvas-editor'
-import { PropertiesPanel } from '@/components/properties-panel'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
-    Type,
-    Square,
-    Circle,
-    Image as ImageIcon,
-    Download,
-    Upload,
-    Trash2,
-    Save,
-    Layers
+    Plus,
+    FileText,
+    Eye,
+    Settings,
+    Clock
 } from 'lucide-react'
 
-export default function CanvasPage() {
-    const {
-        canvas,
-        setCanvas,
-        addText,
-        addRectangle,
-        addCircle,
-        deleteSelected,
-        clearCanvas,
-        exportToImage,
-        exportToJSON,
-    } = useCanvas()
-
-    const [showSaveModal, setShowSaveModal] = useState(false)
-    const [templateName, setTemplateName] = useState('')
-    const [templateDescription, setTemplateDescription] = useState('')
-    const [saving, setSaving] = useState(false)
-
-    const handleExportImage = () => {
-        const dataUrl = exportToImage()
-        if (dataUrl) {
-            const link = document.createElement('a')
-            link.download = 'news-card.png'
-            link.href = dataUrl
-            link.click()
-        }
+interface Template {
+    id: string
+    name: string
+    description: string | null
+    category: string
+    thumbnail: string | null
+    isPublic: boolean
+    isSystem: boolean
+    createdAt: string
+    user: {
+        name: string | null
+        email: string | null
     }
+}
 
-    const handleExportJSON = () => {
-        const json = exportToJSON()
-        if (json) {
-            const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' })
-            const link = document.createElement('a')
-            link.download = 'template.json'
-            link.href = URL.createObjectURL(blob)
-            link.click()
-        }
+const canvasTemplates = [
+    {
+        id: 'square',
+        name: 'Square (1:1)',
+        description: 'Perfect for Instagram posts',
+        ratio: '1:1',
+        width: 1080,
+        height: 1080,
+        icon: '⬜'
+    },
+    {
+        id: 'story',
+        name: 'Story (9:16)',
+        description: 'Ideal for Instagram/Facebook stories',
+        ratio: '9:16',
+        width: 1080,
+        height: 1920,
+        icon: '📱'
+    },
+    {
+        id: 'landscape',
+        name: 'Landscape (16:9)',
+        description: 'Great for YouTube thumbnails',
+        ratio: '16:9',
+        width: 1920,
+        height: 1080,
+        icon: '📺'
+    },
+    {
+        id: 'banner',
+        name: 'Banner (3:1)',
+        description: 'Perfect for website headers',
+        ratio: '3:1',
+        width: 1200,
+        height: 400,
+        icon: '🎨'
     }
+]
 
-    const handleSaveTemplate = async () => {
-        if (!templateName.trim()) {
-            alert('Please enter a template name')
-            return
-        }
+export default function CanvasWelcomePage() {
+    const router = useRouter()
+    const [recentTemplates, setRecentTemplates] = useState<Template[]>([])
+    const [loading, setLoading] = useState(true)
+    const [showCustomDialog, setShowCustomDialog] = useState(false)
+    const [customWidth, setCustomWidth] = useState('1200')
+    const [customHeight, setCustomHeight] = useState('630')
 
-        const canvasData = exportToJSON()
-        if (!canvasData) {
-            alert('No canvas data to save')
-            return
-        }
+    useEffect(() => {
+        fetchRecentTemplates()
+    }, [])
 
-        const thumbnail = exportToImage()
-
+    const fetchRecentTemplates = async () => {
         try {
-            setSaving(true)
-            const response = await fetch('/api/templates', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    name: templateName,
-                    description: templateDescription,
-                    category: 'CUSTOM',
-                    canvasData,
-                    thumbnail,
-                    isPublic: false,
-                }),
-            })
-
-            if (response.ok) {
-                alert('Template saved successfully!')
-                setShowSaveModal(false)
-                setTemplateName('')
-                setTemplateDescription('')
-            } else {
-                const error = await response.json()
-                alert(`Failed to save template: ${error.error}`)
-            }
+            const response = await fetch('/api/templates?limit=6')
+            const data = await response.json()
+            setRecentTemplates(data)
         } catch (error) {
-            console.error('Error saving template:', error)
-            alert('Failed to save template')
+            console.error('Error fetching recent templates:', error)
         } finally {
-            setSaving(false)
+            setLoading(false)
         }
+    }
+
+    const handleCreateCanvas = (template: typeof canvasTemplates[0]) => {
+        router.push(`/canvas/editor?width=${template.width}&height=${template.height}&name=${encodeURIComponent(template.name)}`)
+    }
+
+    const handleCreateCustomCanvas = () => {
+        const width = parseInt(customWidth)
+        const height = parseInt(customHeight)
+
+        if (width < 100 || height < 100 || width > 4000 || height > 4000) {
+            alert('Dimensions must be between 100 and 4000 pixels')
+            return
+        }
+
+        router.push(`/canvas/editor?width=${width}&height=${height}&name=${encodeURIComponent('Custom Canvas')}`)
+        setShowCustomDialog(false)
+    }
+
+    const handleEditTemplate = (template: Template) => {
+        // For now, just create a new canvas with the template loaded
+        // In the future, we can pass the template ID to load it
+        router.push(`/canvas/editor?template=${template.id}&name=${encodeURIComponent(template.name)}`)
     }
 
     return (
         <DashboardLayout>
-            <div className="flex h-full">
-                {/* Left Toolbar */}
-                <div className="w-20 border-r border-border bg-card flex flex-col items-center gap-2 py-4">
-                    <ToolButton
-                        icon={<Type className="w-5 h-5" />}
-                        label="Text"
-                        onClick={() => addText()}
-                    />
-                    <ToolButton
-                        icon={<Square className="w-5 h-5" />}
-                        label="Rectangle"
-                        onClick={() => addRectangle()}
-                    />
-                    <ToolButton
-                        icon={<Circle className="w-5 h-5" />}
-                        label="Circle"
-                        onClick={() => addCircle()}
-                    />
-                    <ToolButton
-                        icon={<ImageIcon className="w-5 h-5" />}
-                        label="Image"
-                        onClick={() => {
-                            // TODO: Open image picker
-                            alert('Image picker coming soon')
-                        }}
-                    />
+            <div className="p-8">
+                <div className="max-w-7xl mx-auto">
+                    {/* Header */}
+                    <div className="text-center mb-12">
+                        <h1 className="text-4xl font-bold mb-4">Create Your Canvas</h1>
+                        <p className="text-xl text-muted-foreground">
+                            Choose a template or create a custom canvas to design your news cards
+                        </p>
+                    </div>
 
-                    <div className="h-px w-12 bg-border my-2" />
+                    {/* Canvas Templates */}
+                    <div className="mb-16">
+                        <h2 className="text-2xl font-semibold mb-8">Choose a Template</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                            {canvasTemplates.map((template) => (
+                                <div
+                                    key={template.id}
+                                    className="bg-card border border-border rounded-lg p-6 hover:shadow-lg transition-shadow cursor-pointer group"
+                                    onClick={() => handleCreateCanvas(template)}
+                                >
+                                    <div className="text-4xl mb-4 text-center">{template.icon}</div>
+                                    <h3 className="font-semibold mb-2">{template.name}</h3>
+                                    <p className="text-sm text-muted-foreground mb-3">{template.description}</p>
+                                    <div className="text-xs text-muted-foreground mb-4">
+                                        {template.width} × {template.height}px ({template.ratio})
+                                    </div>
+                                    <Button className="w-full group-hover:bg-primary/90">
+                                        <Plus className="w-4 h-4 mr-2" />
+                                        Create
+                                    </Button>
+                                </div>
+                            ))}
 
-                    <ToolButton
-                        icon={<Trash2 className="w-5 h-5" />}
-                        label="Delete"
-                        onClick={() => deleteSelected()}
-                    />
-                    <ToolButton
-                        icon={<Layers className="w-5 h-5" />}
-                        label="Clear"
-                        onClick={() => {
-                            if (confirm('Clear entire canvas?')) {
-                                clearCanvas()
-                            }
-                        }}
-                    />
-                </div>
-
-                {/* Canvas Area */}
-                <div className="flex-1 flex flex-col">
-                    {/* Top Toolbar */}
-                    <div className="h-16 border-b border-border bg-card px-6 flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                            <h1 className="text-lg font-semibold">Canvas Editor</h1>
-                            <span className="text-sm text-muted-foreground">1200 × 630px</span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={handleExportJSON}
-                                className="px-4 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors flex items-center gap-2"
-                            >
-                                <Upload className="w-4 h-4" />
-                                Export JSON
-                            </button>
-                            <button
-                                onClick={handleExportImage}
-                                className="px-4 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors flex items-center gap-2"
-                            >
-                                <Download className="w-4 h-4" />
-                                Export PNG
-                            </button>
-                            <button
-                                onClick={() => setShowSaveModal(true)}
-                                className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-2"
-                            >
-                                <Save className="w-4 h-4" />
-                                Save Template
-                            </button>
+                            {/* Custom Size */}
+                            <Dialog open={showCustomDialog} onOpenChange={setShowCustomDialog}>
+                                <DialogTrigger asChild>
+                                    <div className="bg-card border-2 border-dashed border-border rounded-lg p-6 hover:border-primary transition-colors cursor-pointer flex flex-col items-center justify-center min-h-[200px] group">
+                                        <Settings className="w-12 h-12 text-muted-foreground mb-4 group-hover:text-primary" />
+                                        <h3 className="font-semibold mb-2">Custom Size</h3>
+                                        <p className="text-sm text-muted-foreground text-center">Create a canvas with your own dimensions</p>
+                                    </div>
+                                </DialogTrigger>
+                                <DialogContent className="sm:max-w-md">
+                                    <DialogHeader>
+                                        <DialogTitle>Custom Canvas Size</DialogTitle>
+                                    </DialogHeader>
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <Label htmlFor="width">Width (px)</Label>
+                                                <Input
+                                                    id="width"
+                                                    type="number"
+                                                    value={customWidth}
+                                                    onChange={(e) => setCustomWidth(e.target.value)}
+                                                    min="100"
+                                                    max="4000"
+                                                    placeholder="1200"
+                                                />
+                                            </div>
+                                            <div>
+                                                <Label htmlFor="height">Height (px)</Label>
+                                                <Input
+                                                    id="height"
+                                                    type="number"
+                                                    value={customHeight}
+                                                    onChange={(e) => setCustomHeight(e.target.value)}
+                                                    min="100"
+                                                    max="4000"
+                                                    placeholder="630"
+                                                />
+                                            </div>
+                                        </div>
+                                        <Button onClick={handleCreateCustomCanvas} className="w-full">
+                                            Create Custom Canvas
+                                        </Button>
+                                    </div>
+                                </DialogContent>
+                            </Dialog>
                         </div>
                     </div>
 
-                    {/* Canvas */}
-                    <div className="flex-1 p-8 overflow-auto flex items-center justify-center">
-                        <CanvasEditor
-                            width={1200}
-                            height={630}
-                            onCanvasReady={setCanvas}
-                        />
+                    {/* Recent Works */}
+                    <div>
+                        <div className="flex items-center gap-2 mb-8">
+                            <Clock className="w-6 h-6" />
+                            <h2 className="text-2xl font-semibold">Recent Templates</h2>
+                        </div>
+
+                        {loading ? (
+                            <div className="text-center py-12 text-muted-foreground">
+                                Loading recent templates...
+                            </div>
+                        ) : recentTemplates.length === 0 ? (
+                            <div className="text-center py-12">
+                                <FileText className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
+                                <h3 className="text-lg font-semibold mb-2">No templates yet</h3>
+                                <p className="text-muted-foreground mb-6">
+                                    Create your first template to see it here
+                                </p>
+                                <Button onClick={() => router.push('/canvas/editor')}>
+                                    Create Template
+                                </Button>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {recentTemplates.map((template) => (
+                                    <div
+                                        key={template.id}
+                                        className="bg-card border border-border rounded-lg overflow-hidden hover:shadow-lg transition-shadow group"
+                                    >
+                                        {/* Thumbnail */}
+                                        <div className="aspect-video bg-muted flex items-center justify-center relative">
+                                            {template.thumbnail ? (
+                                                <img
+                                                    src={template.thumbnail}
+                                                    alt={template.name}
+                                                    className="w-full h-full object-cover"
+                                                    width={300}
+                                                    height={200}
+                                                />
+                                            ) : (
+                                                <FileText className="w-16 h-16 text-muted-foreground" />
+                                            )}
+
+                                            {/* Overlay on hover */}
+                                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    onClick={() => handleEditTemplate(template)}
+                                                >
+                                                    <Eye className="w-4 h-4 mr-2" />
+                                                    Open
+                                                </Button>
+                                            </div>
+                                        </div>
+
+                                        {/* Content */}
+                                        <div className="p-4">
+                                            <div className="flex items-start justify-between mb-2">
+                                                <div className="flex-1">
+                                                    <h3 className="font-semibold truncate">{template.name}</h3>
+                                                    <p className="text-sm text-muted-foreground truncate">
+                                                        {template.description || 'No description'}
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center justify-between mt-4">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
+                                                        {template.category.replace('_', ' ')}
+                                                    </span>
+                                                    {template.isSystem && (
+                                                        <span className="text-xs px-2 py-1 rounded-full bg-blue-500/10 text-blue-500">
+                                                            System
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                <div className="text-xs text-muted-foreground">
+                                                    {new Date(template.createdAt).toLocaleDateString()}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
-
-                {/* Right Properties Panel */}
-                <PropertiesPanel canvas={canvas} />
             </div>
-
-            {/* Save Template Modal */}
-            {showSaveModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-card border border-border rounded-lg p-6 max-w-md w-full mx-4">
-                        <h2 className="text-xl font-semibold mb-4">Save Template</h2>
-
-                        <div className="space-y-4">
-                            <div>
-                                <label className="text-sm font-medium mb-2 block">Template Name</label>
-                                <input
-                                    type="text"
-                                    value={templateName}
-                                    onChange={(e) => setTemplateName(e.target.value)}
-                                    placeholder="Enter template name"
-                                    className="w-full px-3 py-2 rounded-lg bg-input border border-border"
-                                    autoFocus
-                                />
-                            </div>
-
-                            <div>
-                                <label className="text-sm font-medium mb-2 block">Description (Optional)</label>
-                                <textarea
-                                    value={templateDescription}
-                                    onChange={(e) => setTemplateDescription(e.target.value)}
-                                    placeholder="Enter description"
-                                    className="w-full px-3 py-2 rounded-lg bg-input border border-border"
-                                    rows={3}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-3 mt-6">
-                            <button
-                                onClick={() => setShowSaveModal(false)}
-                                className="flex-1 px-4 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
-                                disabled={saving}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleSaveTemplate}
-                                className="flex-1 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                                disabled={saving}
-                            >
-                                {saving ? 'Saving...' : 'Save'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </DashboardLayout>
-    )
-}
-
-function ToolButton({
-    icon,
-    label,
-    onClick
-}: {
-    icon: React.ReactNode
-    label: string
-    onClick: () => void
-}) {
-    return (
-        <button
-            onClick={onClick}
-            className="w-14 h-14 rounded-lg bg-secondary hover:bg-primary hover:text-primary-foreground transition-colors flex flex-col items-center justify-center gap-1 group"
-            title={label}
-        >
-            {icon}
-            <span className="text-[10px] font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                {label}
-            </span>
-        </button>
     )
 }

@@ -2,14 +2,15 @@ import prisma from '@/lib/db'
 import { getCurrentUser } from '@/lib/session'
 import { NextResponse } from 'next/server'
 
-// GET /api/templates/[id] - Get single template
+// GET /api/templates/[id] - Get a single template
 export async function GET(
     request: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     try {
+        const { id } = await params
         const template = await prisma.template.findUnique({
-            where: { id: params.id },
+            where: { id },
             include: {
                 user: {
                     select: {
@@ -35,16 +36,17 @@ export async function GET(
 // PATCH /api/templates/[id] - Update template
 export async function PATCH(
     request: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     try {
+        const { id } = await params
         const user = await getCurrentUser()
         if (!user) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
         }
 
         const template = await prisma.template.findUnique({
-            where: { id: params.id },
+            where: { id },
         })
 
         if (!template) {
@@ -56,9 +58,20 @@ export async function PATCH(
         }
 
         const body = await request.json()
+        const { isPublic } = body
+
         const updatedTemplate = await prisma.template.update({
-            where: { id: params.id },
-            data: body,
+            where: { id },
+            data: { isPublic },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                    },
+                },
+            },
         })
 
         return NextResponse.json(updatedTemplate)
@@ -71,16 +84,17 @@ export async function PATCH(
 // DELETE /api/templates/[id] - Delete template
 export async function DELETE(
     request: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     try {
+        const { id } = await params
         const user = await getCurrentUser()
         if (!user) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
         }
 
         const template = await prisma.template.findUnique({
-            where: { id: params.id },
+            where: { id },
         })
 
         if (!template) {
@@ -96,7 +110,7 @@ export async function DELETE(
         }
 
         await prisma.template.delete({
-            where: { id: params.id },
+            where: { id },
         })
 
         return NextResponse.json({ success: true })
