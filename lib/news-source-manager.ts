@@ -1,5 +1,9 @@
 import { extract } from '@extractus/article-extractor'
 import Parser from 'rss-parser'
+import { JSDOM } from 'jsdom'
+import { Page, Browser } from 'playwright'
+import {SitemapHandler} from "lib/news-source-manager";
+import {logging} from "googleapis/build/src/googleapis";
 
 export interface NewsItem {
   title: string
@@ -81,7 +85,7 @@ export class ArticleExtractionHandler extends NewsSourceHandler {
   async fetch(config: any): Promise<NewsSourceResult> {
     try {
       // Extract articles from the main page
-      const articles = await extract(config.url, {
+      const article = await extract(config.url, {
         words: 0, // No word limit
         descriptionLengthThreshold: 180,
         contentLengthThreshold: 200,
@@ -89,16 +93,12 @@ export class ArticleExtractionHandler extends NewsSourceHandler {
         ...config.options
       })
 
-      if (!articles || !Array.isArray(articles)) {
-        return {
-          items: [],
-          success: false,
-          method: 'extraction',
-          error: 'No articles extracted'
-        }
+      if (!article) {
+          const scraper = new WebScraperHandler();
+          return scraper.fetch(config);
       }
 
-      const items: NewsItem[] = articles.map((article: any) => ({
+      const item: NewsItem = {
         title: article.title || 'Untitled',
         content: article.content,
         summary: article.description,
@@ -106,11 +106,10 @@ export class ArticleExtractionHandler extends NewsSourceHandler {
         publishedAt: article.published ? new Date(article.published) : undefined,
         author: article.author,
         image: article.image,
-        tags: article.tags || []
-      }))
+      }
 
       return {
-        items,
+        items: [item],
         success: true,
         method: 'extraction'
       }
@@ -122,6 +121,185 @@ export class ArticleExtractionHandler extends NewsSourceHandler {
         error: error instanceof Error ? error.message : 'Unknown error'
       }
     }
+  }
+}
+
+// Sitemap Handler
+export class SitemapHandler extends NewsSourceHandler {
+  canHandle(type: string, config: any): boolean {
+    return type === 'AUTO' || type === 'SITEMAP'
+  }
+
+  async fetch(config: any): Promise<NewsSourceResult> {
+    try {
+      const baseUrl = config.url.replace(/\/$/, '')
+      const sitemapUrls = [
+        `${baseUrl}/sitemap.xml`,
+        `${baseUrl}/english-sitemap.xml`,
+        `${baseUrl}/english-sitemap/sitemap-daily-${this.getTodayDate()}.xml`,
+      ]
+
+      let sitemapUrl = null
+      let sitemapContent = null
+
+      // Try to find a working sitemap
+      for (const url of sitemapUrls) {
+        try {
+          const response = await fetch(url, {
+            headers: { 'User-Agent': 'News-Agent/1.0' }
+          })
+          if (response.ok) {
+            sitemapContent = await response.text()
+            sitemapUrl = url
+            break
+          }
+        } catch (e) {
+          continue
+        }
+      }
+
+      if (!sitemapContent) {
+        return {
+          items: [],
+          success: false,
+          method: 'scraping',
+          error: 'No sitemap found'
+        }
+      }
+
+      // Parse sitemap XML
+      const dom = new JSDOM(sitemapContent, { contentType: 'text/xml' })
+      const xml = dom.window.document
+      const urlElements = xml.querySelectorAll('urlset > url, sitemapindex > sitemap')
+
+      // If it's a sitemap index, follow it
+      if (xml.querySelector('sitemapindex')) {
+        const sitemapLocs = xml.querySelectorAll('sitemap loc')
+        let items: NewsItem[] = []
+        for (const sitemapLoc of Array.from(sitemapLocs)) {
+            if (sitemapLoc?.textContent) {
+                const response = await fetch(sitemapLoc.textContent.trim(), {
+                    headers: { 'User-Agent': 'News-Agent/1.0' }
+                })
+                if (response.ok) {
+                    sitemapContent = await response.text()
+                    const indexDom = new JSDOM(sitemapContent, { contentType: 'text/xml' })
+                    const indexXml = indexDom.window.document
+                    const urls = indexXml.querySelectorAll('urlset > url')
+                    const result = await this.parseSitemapUrls(urls)
+                    items = items.concat(result.items)
+                }
+            }
+        }
+        return {
+            items,
+            success: true,
+            method: 'scraping'
+        }
+      }
+      // Parse sitemap URLs
+      const articles = await this.parseSitemapUrls(urlElements)
+      if(articles.items.length === 0){
+        return {
+          items: [],
+          success: false,
+          method: 'scraping',
+          error: 'No article URLs found in sitemap'
+        }
+      }
+      const webScraperHandler = new WebScraperHandler();
+      const result = await webScraperHandler.fetch({url: articles.items[0].url})
+      return {
+        items: result.items,
+        success: true,
+        method: 'scraping'
+      }
+    } catch (error) {
+      return {
+        items: [],
+        success: false,
+        method: 'scraping',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  }
+
+  private getTodayDate(): string {
+    const today = new Date()
+    const year = today.getFullYear()
+    const month = String(today.getMonth() + 1).padStart(2, '0')
+    const day = String(today.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  private async parseSitemapUrls(urlElements: NodeListOf<Element>): Promise<NewsSourceResult> {
+    const items: NewsItem[] = []
+
+    for (const urlElement of Array.from(urlElements).slice(0, 10)) { // Limit to 10 items
+      const loc = urlElement.querySelector('loc')
+      const lastmod = urlElement.querySelector('lastmod')
+      const imageCaption = urlElement.querySelector('image\\:caption caption')
+
+      if (loc?.textContent) {
+        const url = loc.textContent.trim()
+
+        // Skip non-article URLs
+        if (this.isArticleUrl(url)) {
+            items.push({
+                title: this.extractTitleFromUrl(url),
+                summary: imageCaption?.textContent?.trim() || undefined,
+                url: url,
+                publishedAt: lastmod?.textContent ? new Date(lastmod.textContent) : undefined,
+                image: this.extractImageFromUrl(urlElement)
+            })
+        }
+      }
+    }
+
+    if (items.length === 0) {
+      return {
+        items: [],
+        success: false,
+        method: 'scraping',
+        error: 'No article URLs found in sitemap'
+      }
+    }
+
+    return {
+      items,
+      success: true,
+      method: 'scraping'
+    }
+  }
+
+  private isArticleUrl(url: string): boolean {
+    // Filter out non-article URLs
+    const excludePatterns = [
+      '/search', '/archives', '/all_tags', '/all_writers',
+      '/privacy-policy', '/terms-conditions', '/converter',
+      '/about-us', '/namaz', '/contact'
+    ]
+    return !excludePatterns.some(pattern => url.includes(pattern)) &&
+           !url.match(/-\d{8}$/) // Exclude date archive URLs
+  }
+
+  private extractTitleFromUrl(url: string): string {
+    // Try to extract title from URL or use last segment
+    const segments = url.split('/')
+    const lastSegment = segments[segments.length - 1]
+    // If it's just a number, we can't extract title from URL
+    if (lastSegment.match(/^\d+$/)) {
+      return 'Article'
+    }
+    // Convert slug to title case
+    return lastSegment
+      .replace(/-/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+  private extractImageFromUrl(urlElement: Element): string | undefined {
+    const imageLoc = urlElement.querySelector('image\\:loc image:loc')
+    return imageLoc?.textContent?.trim()
   }
 }
 
@@ -207,7 +385,9 @@ export class NewsSourceManager {
     this.handlers = [
       new RSSHandler(),
       new RSSDiscoveryHandler(),
-      new ArticleExtractionHandler()
+      new SitemapHandler(),
+      new ArticleExtractionHandler(),
+      new WebScraperHandler()
     ]
   }
 
@@ -223,7 +403,16 @@ export class NewsSourceManager {
         }
       }
 
-      // 2. Try article extraction
+      // 2. Try sitemap parsing
+      const sitemap = this.handlers.find(h => h instanceof SitemapHandler)
+      if (sitemap) {
+        const sitemapResult = await sitemap.fetch(config)
+        if (sitemapResult.success && sitemapResult.items.length > 0) {
+          return sitemapResult
+        }
+      }
+
+      // 3. Try article extraction
       const extraction = this.handlers.find(h => h instanceof ArticleExtractionHandler)
       if (extraction) {
         const extractionResult = await extraction.fetch(config)
@@ -231,6 +420,13 @@ export class NewsSourceManager {
           return extractionResult
         }
       }
+    }
+
+    if(type === 'SCRAPE'){
+        const scraper = this.handlers.find(h => h instanceof WebScraperHandler)
+        if(scraper){
+            return scraper.fetch(config)
+        }
     }
 
     // Try specific handlers
@@ -250,4 +446,96 @@ export class NewsSourceManager {
       error: 'No suitable handler found or all handlers failed'
     }
   }
+}
+export class WebScraperHandler extends NewsSourceHandler {
+    async canHandle(type: string, config: any) {
+        return type === 'SCRAPE';
+    }
+
+    async fetch(config: any) {
+        const browser = await PlaywrightBrowser.getBrowser();
+        const page = await browser.newPage();
+        try {
+            await page.goto(config.url, { waitUntil: 'networkidle' });
+            const links = await getLinks(page, config.url);
+            const items = [];
+            for (const link of links) {
+                try {
+                    const articlePage = await browser.newPage();
+                    await articlePage.goto(link, { waitUntil: 'networkidle' });
+                    const content = await articlePage.content();
+                    if(!content) continue;
+                    const article = await extract(content);
+                    if (!article) continue;
+                    let articles = [];
+                    if(Array.isArray(article)){
+                        articles = article;
+                    } else {
+                        articles.push(article);
+                    }
+
+                    for(const art of articles){
+                        items.push({
+                            title: art.title,
+                            content: art.content,
+                            url: art.url,
+                            publishedAt: art.published,
+                            author: art.author,
+                            image: art.image,
+                        });
+                    }
+
+                    await articlePage.close();
+                } catch (e: any) {
+                    logging.error(`Error scraping ${link}: ${e.message}`);
+                }
+            }
+            return {
+                items,
+                success: true,
+                method: 'scraping',
+            };
+        } catch (e: any) {
+            return {
+                items: [],
+                success: false,
+                method: 'scraping',
+                error: e.message,
+            };
+        } finally {
+            await page.close();
+        }
+    }
+}
+class PlaywrightBrowser {
+    private static browser: Browser;
+
+    static async getBrowser() {
+        if (!this.browser) {
+            const { chromium } = require('playwright');
+            this.browser = await chromium.launch();
+        }
+        return this.browser;
+    }
+
+    static async closeBrowser() {
+        if (this.browser) {
+            await this.browser.close();
+        }
+    }
+}
+async function getLinks(page: Page, baseUrl: string) {
+    const links = await page.evaluate(() => {
+        const anchors = Array.from(document.querySelectorAll('a'));
+        return anchors.map(anchor => anchor.href);
+    });
+    return links.map(link => getAbsoluteUrl(link, baseUrl)).filter(link => link.startsWith(baseUrl));
+}
+
+function getAbsoluteUrl(url: string, baseUrl: string) {
+    try {
+        return new URL(url, baseUrl).href;
+    } catch (e) {
+        return '';
+    }
 }
