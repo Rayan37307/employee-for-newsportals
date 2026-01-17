@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode, useState } from 'react'
+import { ReactNode, useState, useEffect } from 'react'
 import {
     LayoutDashboard,
     Palette,
@@ -10,7 +10,9 @@ import {
     BarChart3,
     Menu,
     X,
-    Settings
+    Settings,
+    Bell,
+    Check
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -27,7 +29,35 @@ const navigation = [
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
     const [sidebarOpen, setSidebarOpen] = useState(false)
+    const [showNotif, setShowNotif] = useState(false)
+    const [notifications, setNotifications] = useState<any[]>([])
     const pathname = usePathname()
+
+    useEffect(() => {
+        loadNotifications()
+    }, [])
+
+    const loadNotifications = async () => {
+        try {
+            const res = await fetch('/api/notifications')
+            if (res.ok) {
+                setNotifications(await res.json())
+            }
+        } catch (e) {
+            console.error(e)
+        }
+    }
+
+    const markRead = async (id: string) => {
+        try {
+            await fetch(`/api/notifications/${id}/read`, { method: 'PATCH' })
+            setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
+        } catch (e) {
+            console.error(e)
+        }
+    }
+
+    const unreadCount = notifications.filter(n => !n.read).length
 
     return (
         <div className="flex h-screen overflow-hidden bg-background">
@@ -105,7 +135,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
             {/* Main content */}
             <div className="flex-1 flex flex-col overflow-hidden">
                 {/* Header */}
-                <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
+                <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6 relative">
                     <button
                         onClick={() => setSidebarOpen(true)}
                         className="lg:hidden text-muted-foreground hover:text-foreground"
@@ -113,13 +143,67 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                         <Menu className="w-6 h-6" />
                     </button>
 
-                    <div className="flex items-center gap-4">
-                        {/* Notifications, User Menu, etc. will go here */}
+                    <div className="flex-1 flex justify-end items-center gap-4">
+                        {/* Notifications */}
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowNotif(!showNotif)}
+                                className="p-2 text-muted-foreground hover:text-foreground relative"
+                            >
+                                <Bell className="w-5 h-5" />
+                                {unreadCount > 0 && (
+                                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-card" />
+                                )}
+                            </button>
+
+                            {showNotif && (
+                                <>
+                                    <div
+                                        className="fixed inset-0 z-30"
+                                        onClick={() => setShowNotif(false)}
+                                    />
+                                    <div className="absolute right-0 top-full mt-2 w-80 bg-card border border-border rounded-lg shadow-lg z-40 overflow-hidden">
+                                        <div className="p-3 border-b border-border font-semibold text-sm flex justify-between items-center">
+                                            Notifications
+                                            {unreadCount > 0 && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">{unreadCount} New</span>}
+                                        </div>
+                                        <div className="max-h-96 overflow-y-auto">
+                                            {notifications.length === 0 ? (
+                                                <div className="p-4 text-center text-muted-foreground text-sm">No notifications</div>
+                                            ) : (
+                                                notifications.map(n => (
+                                                    <div
+                                                        key={n.id}
+                                                        className={`p-3 border-b border-border hover:bg-muted/50 transition-colors ${!n.read ? 'bg-primary/5' : ''}`}
+                                                    >
+                                                        <div className="flex justify-between items-start gap-2">
+                                                            <div>
+                                                                <p className="text-sm font-medium">{n.title}</p>
+                                                                <p className="text-xs text-muted-foreground mt-1">{n.message}</p>
+                                                            </div>
+                                                            {!n.read && (
+                                                                <button
+                                                                    onClick={() => markRead(n.id)}
+                                                                    className="text-primary hover:text-primary/80"
+                                                                    title="Mark as read"
+                                                                >
+                                                                    <Check className="w-3 h-3" />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     </div>
                 </header>
 
                 {/* Page content */}
-                <main className="flex-1 overflow-auto">
+                <main className="flex-1 overflow-auto bg-background">
                     {children}
                 </main>
             </div>

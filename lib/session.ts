@@ -3,6 +3,15 @@ import { authOptions } from "./auth"
 
 export async function getCurrentUser() {
     const session = await getServerSession(authOptions)
+
+    // Development fallback
+    if (process.env.NODE_ENV === 'development' && !session) {
+        const prisma = (await import('@/lib/db')).default
+        // Try to finding existing dev user, or return basic object matching User type
+        const user = await prisma.user.findUnique({ where: { id: 'dev-user-id' } })
+        if (user) return user
+    }
+
     return session?.user
 }
 
