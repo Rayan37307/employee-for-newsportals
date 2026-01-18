@@ -3,6 +3,8 @@ import Parser from 'rss-parser'
 import { JSDOM } from 'jsdom'
 import { Page, Browser } from 'playwright'
 import { UniversalNewsAgent, NewsArticle } from './universal-news-agent';
+import { URLValidator } from './url-validator';
+import { ContentValidator } from './content-validator';
 
 export interface NewsItem {
   title: string
@@ -53,16 +55,78 @@ export class RSSHandler extends NewsSourceHandler {
         }
       }
 
-      const items: NewsItem[] = feedData.items.map((item: any) => ({
-        title: item.title || 'Untitled',
-        content: item.content || item.contentSnippet,
-        summary: item.contentSnippet || item.summary,
-        url: item.link || item.guid,
-        publishedAt: item.pubDate ? new Date(item.pubDate) : undefined,
-        author: item.creator || item.author,
-        image: item.enclosure?.url,
-        tags: item.categories || []
-      }))
+      const urlValidator = new URLValidator(config.url || config.rssUrl);
+      const contentValidator = new ContentValidator({
+        minContentLength: 300,
+        minParagraphs: 3,
+        qualityScoreThreshold: 60
+      });
+
+      const items: NewsItem[] = [];
+      let skippedCount = 0;
+      let invalidCount = 0;
+
+      for (const item of feedData.items) {
+        const url = item.link || item.guid;
+        if (!url) continue;
+
+        const urlValidation = urlValidator.validate(url);
+        
+        if (!urlValidation.valid) {
+          if (urlValidation.type === 'external') {
+            skippedCount++;
+            console.log(`🔒 RSS skipped external URL: ${url}`);
+          } else if (urlValidation.type === 'listing') {
+            skippedCount++;
+            console.log(`📋 RSS skipped listing page: ${url}`);
+          } else if (urlValidation.type === 'utility') {
+            skippedCount++;
+            console.log(`🛠️ RSS skipped utility page: ${url}`);
+          }
+          continue;
+        }
+
+        const content = item.content || item.contentSnippet || '';
+        const title = item.title || 'Untitled';
+        
+        const qualityResult = contentValidator.validate(content, title, url);
+
+        if (!qualityResult.hasRealArticleContent) {
+          invalidCount++;
+          if (qualityResult.isContactPage) {
+            console.log(`📧 RSS skipped contact page: ${url}`);
+          } else if (qualityResult.isAdvertisement) {
+            console.log(`📢 RSS skipped advertisement: ${url}`);
+          } else if (qualityResult.isListingPage) {
+            console.log(`📋 RSS skipped listing content: ${url}`);
+          } else {
+            console.log(`❌ RSS skipped low-quality content (score: ${qualityResult.score}): ${url}`);
+          }
+          continue;
+        }
+
+        items.push({
+          title: item.title || 'Untitled',
+          content: item.content || item.contentSnippet,
+          summary: item.contentSnippet || item.summary,
+          url: url,
+          publishedAt: item.pubDate ? new Date(item.pubDate) : undefined,
+          author: item.creator || item.author,
+          image: item.enclosure?.url,
+          tags: item.categories || []
+        });
+      }
+
+      if (items.length === 0) {
+        return {
+          items: [],
+          success: false,
+          method: 'rss',
+          error: `No valid articles found in feed. Skipped: ${skippedCount} external/listing, ${invalidCount} low-quality`
+        }
+      }
+
+      console.log(`✅ RSS extracted ${items.length} valid articles (skipped ${skippedCount + invalidCount} invalid)`);
 
       return {
         items,
@@ -88,9 +152,14 @@ export class ArticleExtractionHandler extends NewsSourceHandler {
 
   async fetch(config: any): Promise<NewsSourceResult> {
     try {
-      // Extract articles from the main page
+      const contentValidator = new ContentValidator({
+        minContentLength: 300,
+        minParagraphs: 3,
+        qualityScoreThreshold: 60
+      });
+
       const article = await extract(config.url, {
-        words: 0, // No word limit
+        words: 0,
         descriptionLengthThreshold: 180,
         contentLengthThreshold: 200,
         useReadability: true,
@@ -102,6 +171,21 @@ export class ArticleExtractionHandler extends NewsSourceHandler {
           return scraper.fetch(config);
       }
 
+      const qualityResult = contentValidator.validate(
+        article.content || '',
+        article.title || '',
+        config.url
+      );
+
+      if (!qualityResult.hasRealArticleContent) {
+        console.log(`❌ ArticleExtractionHandler: Low quality content detected for ${config.url}`);
+        console.log(`   Quality score: ${qualityResult.score}`);
+        console.log(`   Reasons: ${qualityResult.reasons.join('; ')}`);
+        
+        const scraper = new WebScraperHandler();
+        return scraper.fetch(config);
+      }
+
       const item: NewsItem = {
         title: article.title || 'Untitled',
         content: article.content,
@@ -111,6 +195,8 @@ export class ArticleExtractionHandler extends NewsSourceHandler {
         author: article.author,
         image: article.image,
       }
+
+      console.log(`✅ ArticleExtractionHandler: Successfully extracted (quality score: ${qualityResult.score})`);
 
       return {
         items: [item],
@@ -146,7 +232,6 @@ export class SitemapHandler extends NewsSourceHandler {
       let sitemapUrl = null
       let sitemapContent = null
 
-      // Try to find a working sitemap
       for (const url of sitemapUrls) {
         try {
           const response = await fetch(url, {
@@ -171,12 +256,10 @@ export class SitemapHandler extends NewsSourceHandler {
         }
       }
 
-      // Parse sitemap XML
       const dom = new JSDOM(sitemapContent, { contentType: 'text/xml' })
       const xml = dom.window.document
       const urlElements = xml.querySelectorAll('urlset > url, sitemapindex > sitemap')
 
-      // If it's a sitemap index, follow it
       if (xml.querySelector('sitemapindex')) {
         const sitemapLocs = xml.querySelectorAll('sitemap loc')
         let items: NewsItem[] = []
@@ -190,7 +273,7 @@ export class SitemapHandler extends NewsSourceHandler {
                     const indexDom = new JSDOM(sitemapContent, { contentType: 'text/xml' })
                     const indexXml = indexDom.window.document
                     const urls = indexXml.querySelectorAll('urlset > url')
-                    const result = await this.parseSitemapUrls(urls)
+                    const result = await this.parseSitemapUrls(urls, config.url)
                     items = items.concat(result.items)
                 }
             }
@@ -201,8 +284,7 @@ export class SitemapHandler extends NewsSourceHandler {
             method: 'scraping'
         }
       }
-      // Parse sitemap URLs
-      const articles = await this.parseSitemapUrls(urlElements)
+      const articles = await this.parseSitemapUrls(urlElements, config.url)
       if(articles.items.length === 0){
         return {
           items: [],
@@ -236,10 +318,12 @@ export class SitemapHandler extends NewsSourceHandler {
     return `${year}-${month}-${day}`
   }
 
-  private async parseSitemapUrls(urlElements: NodeListOf<Element>): Promise<NewsSourceResult> {
+  private async parseSitemapUrls(urlElements: NodeListOf<Element>, baseUrl: string): Promise<NewsSourceResult> {
     const items: NewsItem[] = []
+    const urlValidator = new URLValidator(baseUrl);
+    let skippedCount = 0;
 
-    for (const urlElement of Array.from(urlElements).slice(0, 10)) { // Limit to 10 items
+    for (const urlElement of Array.from(urlElements).slice(0, 20)) {
       const loc = urlElement.querySelector('loc')
       const lastmod = urlElement.querySelector('lastmod')
       const imageCaption = urlElement.querySelector('image\\:caption caption')
@@ -247,16 +331,27 @@ export class SitemapHandler extends NewsSourceHandler {
       if (loc?.textContent) {
         const url = loc.textContent.trim()
 
-        // Skip non-article URLs
-        if (this.isArticleUrl(url)) {
-            items.push({
-                title: this.extractTitleFromUrl(url),
-                summary: imageCaption?.textContent?.trim() || undefined,
-                url: url,
-                publishedAt: lastmod?.textContent ? new Date(lastmod.textContent) : undefined,
-                image: this.extractImageFromUrl(urlElement)
-            })
+        const validation = urlValidator.validate(url);
+        
+        if (!validation.valid) {
+          skippedCount++;
+          if (validation.type === 'external') {
+            console.log(`🔒 Sitemap skipped external URL: ${url}`);
+          } else if (validation.type === 'listing') {
+            console.log(`📋 Sitemap skipped listing page: ${url}`);
+          } else if (validation.type === 'utility') {
+            console.log(`🛠️ Sitemap skipped utility page: ${url}`);
+          }
+          continue;
         }
+
+        items.push({
+            title: this.extractTitleFromUrl(url),
+            summary: imageCaption?.textContent?.trim() || undefined,
+            url: url,
+            publishedAt: lastmod?.textContent ? new Date(lastmod.textContent) : undefined,
+            image: this.extractImageFromUrl(urlElement)
+        })
       }
     }
 
@@ -265,9 +360,11 @@ export class SitemapHandler extends NewsSourceHandler {
         items: [],
         success: false,
         method: 'scraping',
-        error: 'No article URLs found in sitemap'
+        error: `No valid article URLs found in sitemap (skipped ${skippedCount} invalid URLs)`
       }
     }
+
+    console.log(`✅ Sitemap extracted ${items.length} valid article URLs (skipped ${skippedCount} invalid)`);
 
     return {
       items,
@@ -277,25 +374,21 @@ export class SitemapHandler extends NewsSourceHandler {
   }
 
   private isArticleUrl(url: string): boolean {
-    // Filter out non-article URLs
     const excludePatterns = [
       '/search', '/archives', '/all_tags', '/all_writers',
       '/privacy-policy', '/terms-conditions', '/converter',
       '/about-us', '/namaz', '/contact'
     ]
     return !excludePatterns.some(pattern => url.includes(pattern)) &&
-           !url.match(/-\d{8}$/) // Exclude date archive URLs
+           !url.match(/-\d{8}$/)
   }
 
   private extractTitleFromUrl(url: string): string {
-    // Try to extract title from URL or use last segment
     const segments = url.split('/')
     const lastSegment = segments[segments.length - 1]
-    // If it's just a number, we can't extract title from URL
     if (lastSegment.match(/^\d+$/)) {
       return 'Article'
     }
-    // Convert slug to title case
     return lastSegment
       .replace(/-/g, ' ')
       .replace(/\b\w/g, c => c.toUpperCase())
@@ -390,22 +483,59 @@ export class WebScraperHandler extends NewsSourceHandler {
         const browser = await PlaywrightBrowser.getBrowser();
         const page = await browser.newPage();
         try {
-            await page.goto(config.url, { waitUntil: 'networkidle' });
+            await page.goto(config.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
             const links = await getLinks(page, config.url);
             const items: NewsItem[] = [];
-            for (const link of links) {
+            let skippedExternal = 0;
+            let skippedListing = 0;
+            let skippedLowQuality = 0;
+            
+            const urlValidator = new URLValidator(config.url);
+            const contentValidator = new ContentValidator({
+                minContentLength: 300,
+                minParagraphs: 3,
+                qualityScoreThreshold: 60
+            });
+
+            for (const link of links.slice(0, 10)) {
+                const urlValidation = urlValidator.validate(link);
+                
+                if (!urlValidation.valid) {
+                    if (urlValidation.type === 'external') {
+                        skippedExternal++;
+                    } else if (urlValidation.type === 'listing') {
+                        skippedListing++;
+                    }
+                    continue;
+                }
+
                 try {
                     const articlePage = await browser.newPage();
-                    await articlePage.goto(link, { waitUntil: 'networkidle' });
+                    await articlePage.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 });
                     const content = await articlePage.content();
                     if(!content) continue;
-                    const article = await extract(content);
-                    if (!article) continue;
+                    
+                    const extractedArticle = await extract(content);
+                    if (!extractedArticle) continue;
+                    
+                    const qualityResult = contentValidator.validate(
+                        extractedArticle.content || '',
+                        extractedArticle.title || '',
+                        link
+                    );
+
+                    if (!qualityResult.hasRealArticleContent) {
+                        skippedLowQuality++;
+                        console.log(`❌ WebScraper skipped low-quality article (score: ${qualityResult.score}): ${link}`);
+                        await articlePage.close();
+                        continue;
+                    }
+
                     let articles = [];
-                    if(Array.isArray(article)){
-                        articles = article;
+                    if(Array.isArray(extractedArticle)){
+                        articles = extractedArticle;
                     } else {
-                        articles.push(article);
+                        articles.push(extractedArticle);
                     }
 
                     for(const art of articles){
@@ -426,6 +556,18 @@ export class WebScraperHandler extends NewsSourceHandler {
                     console.error(`Error scraping ${link}: ${e.message}`);
                 }
             }
+
+            if (items.length === 0) {
+                return {
+                    items: [],
+                    success: false,
+                    method: 'scraping',
+                    error: `No valid articles found. Skipped: ${skippedExternal} external, ${skippedListing} listing, ${skippedLowQuality} low-quality`
+                };
+            }
+
+            console.log(`✅ WebScraper extracted ${items.length} valid articles (skipped ${skippedExternal + skippedListing + skippedLowQuality} invalid)`);
+
             return {
                 items,
                 success: true,
@@ -479,7 +621,7 @@ export class UniversalNewsHandler extends NewsSourceHandler {
       const result = await agent.fetchNews();
       await agent.cleanup();
 
-      if (!result.success) {
+      if (!result.success || result.articles.length === 0) {
         return {
           items: [],
           success: false,
@@ -488,8 +630,51 @@ export class UniversalNewsHandler extends NewsSourceHandler {
         };
       }
 
-      // Convert NewsArticle to NewsItem
-      const items: NewsItem[] = result.articles.map((article: NewsArticle) => ({
+      const validArticles = result.articles.filter((article: NewsArticle) => {
+        if (article.extraction_failed) {
+          console.log(`❌ UniversalNewsHandler: Skipped failed extraction - ${article.url}`);
+          console.log(`   Reason: ${article.extraction_trace.failure_reason}`);
+          return false;
+        }
+        
+        if (article.extraction_trace.is_listing_page) {
+          console.log(`📋 UniversalNewsHandler: Skipped listing page - ${article.url}`);
+          return false;
+        }
+        
+        if (article.extraction_trace.is_contact_page) {
+          console.log(`📧 UniversalNewsHandler: Skipped contact page - ${article.url}`);
+          return false;
+        }
+        
+        if (article.extraction_trace.is_advertisement) {
+          console.log(`📢 UniversalNewsHandler: Skipped advertisement - ${article.url}`);
+          return false;
+        }
+        
+        if ((article.extraction_trace.content_quality_score || 0) < 60) {
+          console.log(`❌ UniversalNewsHandler: Skipped low-quality article (score: ${article.extraction_trace.content_quality_score}) - ${article.url}`);
+          return false;
+        }
+        
+        return true;
+      });
+
+      if (validArticles.length === 0) {
+        return {
+          items: [],
+          success: false,
+          method: 'api',
+          error: 'All extracted articles failed quality validation'
+        };
+      }
+
+      const skippedCount = result.articles.length - validArticles.length;
+      if (skippedCount > 0) {
+        console.log(`✅ UniversalNewsHandler: ${validArticles.length} valid articles extracted (skipped ${skippedCount} invalid)`);
+      }
+
+      const items: NewsItem[] = validArticles.map((article: NewsArticle) => ({
         title: article.title,
         content: article.content,
         description: article.description,
@@ -502,7 +687,7 @@ export class UniversalNewsHandler extends NewsSourceHandler {
         category: article.category,
         language: article.language,
         source: article.source,
-        tags: [article.category].filter(Boolean) // Convert category to tags array
+        tags: [article.category].filter(Boolean)
       }));
 
       return {
@@ -522,11 +707,22 @@ export class UniversalNewsHandler extends NewsSourceHandler {
 }
 
 async function getLinks(page: Page, baseUrl: string) {
+    const urlValidator = new URLValidator(baseUrl);
+    
     const links = await page.evaluate(() => {
         const anchors = Array.from(document.querySelectorAll('a'));
         return anchors.map(anchor => anchor.href);
     });
-    return links.map(link => getAbsoluteUrl(link, baseUrl)).filter(link => link.startsWith(baseUrl));
+    
+    const validLinks = links
+        .map(link => getAbsoluteUrl(link, baseUrl))
+        .filter(link => link.startsWith(baseUrl))
+        .filter(link => {
+            const validation = urlValidator.validate(link);
+            return validation.valid && validation.type === 'article';
+        });
+    
+    return [...new Set(validLinks)];
 }
 
 function getAbsoluteUrl(url: string, baseUrl: string) {
