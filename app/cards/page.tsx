@@ -116,9 +116,12 @@ export default function CardsPage() {
 
   const fetchArticles = async () => {
     try {
+      // Get list of posted links
       const response = await fetch('/api/bangladesh-guardian', { method: 'POST' })
       const data = await response.json()
+      
       if (data.success && data.links) {
+        // Just store the links, we'll fetch full data when needed
         const articleList: Article[] = data.links.map((link: any) => ({
           id: link.id,
           title: link.title,
@@ -135,6 +138,51 @@ export default function CardsPage() {
       }
     } catch (error) {
       console.error('Error fetching articles:', error)
+    }
+  }
+
+  // Fetch full article data including content and image
+  const fetchFullArticleData = async (article: Article): Promise<Article> => {
+    // If we already have content, return as is
+    if (article.description && article.content) {
+      return article
+    }
+    
+    try {
+      // Fetch article image
+      let imageUrl = article.image
+      if (!imageUrl) {
+        const imageResponse = await fetch(`/api/bangladesh-guardian/image?url=${encodeURIComponent(article.link)}`)
+        if (imageResponse.ok) {
+          const imageData = await imageResponse.json()
+          imageUrl = imageData.image
+        }
+      }
+
+      // Fetch article content using the main API
+      const response = await fetch('/api/bangladesh-guardian')
+      const data = await response.json()
+      
+      if (data.success && data.articles) {
+        // Find matching article
+        const fullArticle = data.articles.find((a: any) => a.link === article.link)
+        if (fullArticle) {
+          return {
+            ...article,
+            image: fullArticle.image || imageUrl,
+            content: fullArticle.content || article.content,
+            description: fullArticle.description || article.description,
+            author: fullArticle.author || article.author,
+            publishedAt: fullArticle.publishedAt || article.publishedAt,
+            category: fullArticle.category || article.category
+          }
+        }
+      }
+      
+      return { ...article, image: imageUrl }
+    } catch (error) {
+      console.error('Error fetching full article data:', error)
+      return article
     }
   }
 
@@ -193,6 +241,14 @@ export default function CardsPage() {
     setGeneratedCard(null)
 
     try {
+      // Fetch full article data
+      const fullArticle = await fetchFullArticleData(article)
+      console.log('Full article data:', {
+        title: fullArticle.title,
+        description: fullArticle.description ? fullArticle.description.substring(0, 50) + '...' : 'N/A',
+        image: fullArticle.image ? fullArticle.image.substring(0, 50) + '...' : 'N/A'
+      })
+
       // Wait for preview to render
       await new Promise(resolve => setTimeout(resolve, 100))
 
@@ -249,7 +305,7 @@ export default function CardsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          article,
+          article: fullArticle,
           templateId: selectedTemplate,
           imageUrl
         })
@@ -317,6 +373,11 @@ export default function CardsPage() {
           const type = (obj.type || '').toLowerCase()
           const dynamicField = obj.dynamicField || 'none'
           
+          console.log(`Object ${index}: type=${type}, dynamicField=${dynamicField}, text=${obj.text || 'N/A'}`)
+          console.log('  Article sanitizedTitle:', article.sanitizedTitle || article.title)
+          console.log('  Article description:', article.description ? article.description.substring(0, 50) + '...' : 'N/A')
+          console.log('  Article image:', article.image || 'N/A')
+          
           let left = obj.left || 0
           let top = obj.top || 0
           
@@ -343,6 +404,8 @@ export default function CardsPage() {
             } else if (dynamicField === 'category') {
               text = article.category || ''
             }
+
+            console.log('  Final text:', text.substring(0, 50) + '...')
 
             return (
               <div
