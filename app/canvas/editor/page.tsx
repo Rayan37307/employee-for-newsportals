@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useRef, Suspense } from 'react'
+import React, { useState, useRef, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 import { DashboardLayout } from '@/components/dashboard-layout'
@@ -22,8 +22,8 @@ import {
 
 function CanvasEditorContent() {
     const searchParams = useSearchParams()
-    const width = parseInt(searchParams.get('width') || '1200')
-    const height = parseInt(searchParams.get('height') || '630')
+    const urlWidth = parseInt(searchParams.get('width') || '1200')
+    const urlHeight = parseInt(searchParams.get('height') || '630')
     const canvasName = searchParams.get('name') || 'Canvas'
     const templateId = searchParams.get('template')
 
@@ -38,6 +38,7 @@ function CanvasEditorContent() {
         clearCanvas,
         exportToImage,
         exportToJSON,
+        loadFromJSON,
     } = useCanvas()
 
     const [showSaveModal, setShowSaveModal] = useState(false)
@@ -45,7 +46,58 @@ function CanvasEditorContent() {
     const [templateName, setTemplateName] = useState('')
     const [templateDescription, setTemplateDescription] = useState('')
     const [saving, setSaving] = useState(false)
+    const [loading, setLoading] = useState(false)
+    const [canvasWidth, setCanvasWidth] = useState(urlWidth)
+    const [canvasHeight, setCanvasHeight] = useState(urlHeight)
+    const [initialData, setInitialData] = useState<any>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+
+    // Load template if templateId is provided
+    useEffect(() => {
+        const loadTemplate = async () => {
+            if (!templateId) return
+
+            try {
+                setLoading(true)
+                const response = await fetch(`/api/templates/${templateId}`)
+                if (response.ok) {
+                    const template = await response.json()
+                    
+                    // Parse canvasData
+                    let canvasData = template.canvasData
+                    if (typeof canvasData === 'string') {
+                        canvasData = JSON.parse(canvasData)
+                    }
+
+                    // Extract canvas dimensions from template
+                    const templateWidth = canvasData.width || urlWidth
+                    const templateHeight = canvasData.height || urlHeight
+
+                    // Set canvas dimensions from template (before setting initialData)
+                    setCanvasWidth(templateWidth)
+                    setCanvasHeight(templateHeight)
+                    
+                    // Update URL with correct dimensions
+                    const newUrl = new URL(window.location.href)
+                    newUrl.searchParams.set('width', String(templateWidth))
+                    newUrl.searchParams.set('height', String(templateHeight))
+                    window.history.replaceState({}, '', newUrl.toString())
+
+                    // Set initial data for canvas
+                    setInitialData(canvasData)
+                    setTemplateName(template.name)
+                    setTemplateDescription(template.description || '')
+                }
+            } catch (error) {
+                console.error('Error loading template:', error)
+                alert('Failed to load template')
+            } finally {
+                setLoading(false)
+            }
+        }
+
+        loadTemplate()
+    }, [templateId])
 
     const handleExportImage = () => {
         const dataUrl = exportToImage()
@@ -79,6 +131,14 @@ function CanvasEditorContent() {
             alert('No canvas data to save')
             return
         }
+
+        // Ensure width and height are in the saved data
+        // Use the actual canvas dimensions
+        const actualWidth = canvas ? (canvas.getWidth ? canvas.getWidth() : canvasWidth) : canvasWidth
+        const actualHeight = canvas ? (canvas.getHeight ? canvas.getHeight() : canvasHeight) : canvasHeight
+        
+        canvasData.width = actualWidth
+        canvasData.height = actualHeight
 
         const thumbnail = exportToImage()
 
@@ -120,13 +180,11 @@ function CanvasEditorContent() {
         const file = event.target.files?.[0]
         if (!file) return
 
-        // Validate file type
         if (!file.type.startsWith('image/')) {
             alert('Please select an image file')
             return
         }
 
-        // Validate file size (max 5MB)
         if (file.size > 5 * 1024 * 1024) {
             alert('Image size must be less than 5MB')
             return
@@ -142,10 +200,22 @@ function CanvasEditorContent() {
         }
         reader.readAsDataURL(file)
 
-        // Reset file input
         if (fileInputRef.current) {
             fileInputRef.current.value = ''
         }
+    }
+
+    if (loading) {
+        return (
+            <DashboardLayout>
+                <div className="flex items-center justify-center h-full">
+                    <div className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+                        <p>Loading template...</p>
+                    </div>
+                </div>
+            </DashboardLayout>
+        )
     }
 
     return (
@@ -226,8 +296,8 @@ function CanvasEditorContent() {
                     {/* Top Toolbar */}
                     <div className="h-16 border-b border-border bg-card px-6 flex items-center justify-between">
                         <div className="flex items-center gap-4">
-                            <h1 className="text-lg font-semibold">{canvasName}</h1>
-                            <span className="text-sm text-muted-foreground">{width} × {height}px</span>
+                            <h1 className="text-lg font-semibold">{templateName || canvasName}</h1>
+                            <span className="text-sm text-muted-foreground">{canvasWidth} × {canvasHeight}px</span>
                         </div>
 
                         <div className="flex items-center gap-2">
@@ -258,9 +328,9 @@ function CanvasEditorContent() {
                     {/* Canvas */}
                     <div className="flex-1 p-8 overflow-auto flex items-center justify-center">
                         <CanvasEditor
-                            width={width}
-                            height={height}
-                            initialData={templateId ? undefined : undefined} // TODO: Load template data if templateId exists
+                            width={canvasWidth}
+                            height={canvasHeight}
+                            initialData={initialData}
                             onCanvasReady={setCanvas}
                         />
                     </div>
@@ -299,23 +369,21 @@ function CanvasEditorContent() {
                                     rows={3}
                                 />
                             </div>
-                        </div>
 
-                        <div className="flex items-center gap-3 mt-6">
-                            <button
-                                onClick={() => setShowSaveModal(false)}
-                                className="flex-1 px-4 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
-                                disabled={saving}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleSaveTemplate}
-                                className="flex-1 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                                disabled={saving}
-                            >
-                                {saving ? 'Saving...' : 'Save'}
-                            </button>
+                            <div className="flex justify-end gap-2 pt-4">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setShowSaveModal(false)}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    onClick={handleSaveTemplate}
+                                    disabled={saving}
+                                >
+                                    {saving ? 'Saving...' : 'Save Template'}
+                                </Button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -324,33 +392,32 @@ function CanvasEditorContent() {
     )
 }
 
-export default function CanvasEditorPage() {
-    return (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading canvas...</div>}>
-            <CanvasEditorContent />
-        </Suspense>
-    )
-}
-
-function ToolButton({
-    icon,
-    label,
-    onClick
-}: {
-    icon: React.ReactNode
-    label: string
-    onClick: () => void
-}) {
+function ToolButton({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
     return (
         <button
             onClick={onClick}
-            className="w-14 h-14 rounded-lg bg-secondary hover:bg-primary hover:text-primary-foreground transition-colors flex flex-col items-center justify-center gap-1 group"
+            className="flex flex-col items-center justify-center w-14 h-14 rounded-lg hover:bg-muted transition-colors"
             title={label}
         >
             {icon}
-            <span className="text-[10px] font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                {label}
-            </span>
+            <span className="text-[10px] mt-1">{label}</span>
         </button>
+    )
+}
+
+export default function CanvasEditorPage() {
+    return (
+        <Suspense fallback={
+            <DashboardLayout>
+                <div className="flex items-center justify-center h-full">
+                    <div className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+                        <p>Loading editor...</p>
+                    </div>
+                </div>
+            </DashboardLayout>
+        }>
+            <CanvasEditorContent />
+        </Suspense>
     )
 }

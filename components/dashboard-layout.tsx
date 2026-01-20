@@ -12,7 +12,8 @@ import {
     X,
     Settings,
     Bell,
-    Check
+    Check,
+    CreditCard
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -20,6 +21,7 @@ import { usePathname } from 'next/navigation'
 const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { name: 'Canvas', href: '/canvas', icon: Palette },
+    { name: 'Cards', href: '/cards', icon: CreditCard },
     { name: 'Templates', href: '/templates', icon: FileText },
     { name: 'Sources', href: '/sources', icon: Rss },
     { name: 'History', href: '/history', icon: History },

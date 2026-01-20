@@ -603,6 +603,56 @@ class PlaywrightBrowser {
     }
 }
 
+// Bangladesh Guardian Handler
+export class BangladeshGuardianHandler extends NewsSourceHandler {
+  canHandle(type: string, config: any): boolean {
+    return type === 'BANGLADESH_GUARDIAN';
+  }
+
+  async fetch(config: any): Promise<NewsSourceResult> {
+    try {
+      // Import the Bangladesh Guardian agent functions
+      const { getLatestNews } = await import('./bangladesh-guardian-agent');
+
+      const articles = await getLatestNews();
+
+      if (!articles || articles.length === 0) {
+        return {
+          items: [],
+          success: false,
+          method: 'scraping',
+          error: 'No articles found from Bangladesh Guardian'
+        };
+      }
+
+      const items = articles.map((article: any) => ({
+        title: article.title,
+        content: article.description || '',
+        summary: article.description || '',
+        url: article.link,
+        image: article.image || '',
+        publishedAt: article.date ? new Date(article.date) : undefined,
+        source: 'Bangladesh Guardian'
+      }));
+
+      console.log(`✅ BangladeshGuardianHandler: Successfully extracted ${items.length} articles`);
+
+      return {
+        items,
+        success: true,
+        method: 'scraping'
+      };
+    } catch (error) {
+      return {
+        items: [],
+        success: false,
+        method: 'scraping',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+}
+
 // Universal News Agent Handler
 export class UniversalNewsHandler extends NewsSourceHandler {
   canHandle(type: string, config: any): boolean {
@@ -744,6 +794,7 @@ export class NewsSourceManager {
       new SitemapHandler(),
       new ArticleExtractionHandler(),
       new WebScraperHandler(),
+      new BangladeshGuardianHandler(),
       new UniversalNewsHandler()
     ]
   }
@@ -790,6 +841,13 @@ export class NewsSourceManager {
         const universalHandler = this.handlers.find(h => h instanceof UniversalNewsHandler)
         if(universalHandler){
             return universalHandler.fetch(config)
+        }
+    }
+
+    if(type === 'BANGLADESH_GUARDIAN'){
+        const bdGuardianHandler = this.handlers.find(h => h instanceof BangladeshGuardianHandler)
+        if(bdGuardianHandler){
+            return bdGuardianHandler.fetch(config)
         }
     }
 

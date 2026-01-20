@@ -1,87 +1,263 @@
-import prisma from '@/lib/db'
-import { getCurrentUser } from '@/lib/session'
-import { NextResponse } from 'next/server'
-import { NewsSourceManager } from '@/lib/news-source-manager'
+import { NextRequest, NextResponse } from 'next/server';
+import { getLatestNews } from '@/lib/bangladesh-guardian-agent';
+import prisma from '@/lib/db';
+import { generateCardImage } from '@/lib/card-generator';
 
-// POST /api/sources/[id]/fetch - Trigger a fetch
-export async function POST(
-    request: Request,
-    props: { params: Promise<{ id: string }> }
-) {
-    const params = await props.params;
-    try {
-        const user = await getCurrentUser()
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id: sourceId } = await params;
 
-        // Check if source exists
-        const source = await prisma.newsSource.findUnique({
-            where: { id: params.id },
-        })
-
-        if (!source) {
-            return NextResponse.json({ error: 'Source not found' }, { status: 404 })
-        }
-
-        // Check ownership (unless admin)
-        if (user?.role !== 'ADMIN' && source.userId !== user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-        }
-
-        const manager = new NewsSourceManager()
-        const config = source.config as any
-
-        // Add the source URL if not present
-        if (!config.url && source.type === 'AUTO') {
-            config.url = config.endpoint || config.rssUrl // Fallback for different config formats
-        }
-
-        try {
-            const result = await manager.fetchNewsSource(source.type, config)
-
-            // Update source status
-            const updateData: any = {
-                lastFetchedAt: new Date(),
-            }
-
-            if (result.success) {
-                updateData.lastError = null
-            } else {
-                updateData.lastError = result.error || 'Unknown error'
-            }
-
-            const updatedSource = await prisma.newsSource.update({
-                where: { id: params.id },
-                data: updateData
-            })
-
-            return NextResponse.json({
-                source: updatedSource,
-                items: result.items.slice(0, 10), // Return up to 10 items
-                method: result.method,
-                success: result.success,
-                error: result.error
-            })
-
-        } catch (fetchError: any) {
-            console.error('Fetch error:', fetchError)
-            await prisma.newsSource.update({
-                where: { id: params.id },
-                data: {
-                    lastError: fetchError.message || 'Unknown error',
-                    lastFetchedAt: new Date()
-                }
-            })
-            return NextResponse.json({
-                error: 'Failed to fetch news source',
-                details: fetchError.message
-            }, { status: 502 })
-        }
-
-    } catch (error: any) {
-        console.error('Error processing fetch request:', error)
-        return NextResponse.json({
-            error: 'Internal Server Error',
-            details: error.message,
-            stack: error.stack
-        }, { status: 500 })
+    if (!sourceId) {
+      return NextResponse.json({ error: 'Source ID is required' }, { status: 400 });
     }
+
+    // Fetch the source to get its type and configuration
+    const source = await prisma.newsSource.findUnique({
+      where: { id: sourceId }
+    });
+
+    if (!source) {
+      return NextResponse.json({ error: 'Source not found' }, { status: 404 });
+    }
+
+    // Import the universal news agent to handle different source types
+    const { UniversalNewsAgent } = await import('@/lib/universal-news-agent');
+
+    // Create agent with source config
+    const agent = new UniversalNewsAgent({
+      url: source.config.url || source.config.endpoint,
+      maxConcurrency: 3,
+      cacheTimeout: 3600000,
+      userAgent: 'News-Agent/1.0'
+    });
+
+    // Fetch news based on source type and configuration
+    const result = await agent.fetchNews();
+    await agent.cleanup();
+
+    if (!result.success || result.articles.length === 0) {
+      return NextResponse.json({ error: result.error || 'Failed to fetch news from source' }, { status: 500 });
+    }
+
+    // Filter valid articles
+    const validArticles = result.articles.filter((article: any) => {
+      return !article.extraction_failed &&
+             !article.extraction_trace?.is_listing_page &&
+             !article.extraction_trace?.is_contact_page &&
+             !article.extraction_trace?.is_advertisement &&
+             (article.extraction_trace?.content_quality_score || 100) >= 60;
+    });
+
+    // Map articles to news items format expected by the rest of the code
+    const newsItems = validArticles.map((article: any) => ({
+      title: article.title,
+      content: article.content,
+      description: article.description,
+      summary: article.description,
+      link: article.url,
+      publishedAt: new Date(article.published_at),
+      published_at: article.published_at,
+      author: article.author,
+      image: article.image,
+      category: article.category,
+      source: article.source
+    }));
+
+    // Process each news item to extract content
+    const processedItems = [];
+    for (const item of newsItems) {
+      // Skip if already processed recently (prevent duplicates)
+      const existingCard = await prisma.newsCard.findFirst({
+        where: {
+          sourceData: { path: ['link'], string_contains: item.link }
+        }
+      });
+
+      if (!existingCard) {
+        processedItems.push({
+          ...item,
+          image: item.image || null, // Use image from the article data
+          date: new Date().toISOString(),
+          content: item.content || '' // Use content from the article data
+        });
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      items: processedItems,
+      count: processedItems.length
+    });
+  } catch (error) {
+    console.error('Error fetching news from source:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch news', details: (error as Error).message },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id: sourceId } = await params;
+
+    if (!sourceId) {
+      return NextResponse.json({ error: 'Source ID is required' }, { status: 400 });
+    }
+
+    // Fetch the source to get its type and configuration
+    const source = await prisma.newsSource.findUnique({
+      where: { id: sourceId }
+    });
+
+    if (!source) {
+      return NextResponse.json({ error: 'Source not found' }, { status: 404 });
+    }
+
+    // Import the universal news agent to handle different source types
+    const { UniversalNewsAgent } = await import('@/lib/universal-news-agent');
+
+    // Create agent with source config
+    const agent = new UniversalNewsAgent({
+      url: source.config.url || source.config.endpoint,
+      maxConcurrency: 3,
+      cacheTimeout: 3600000,
+      userAgent: 'News-Agent/1.0'
+    });
+
+    // Fetch news based on source type and configuration
+    const result = await agent.fetchNews();
+    await agent.cleanup();
+
+    if (!result.success || result.articles.length === 0) {
+      return NextResponse.json({ error: result.error || 'Failed to fetch news from source' }, { status: 500 });
+    }
+
+    // Filter valid articles
+    const validArticles = result.articles.filter((article: any) => {
+      return !article.extraction_failed &&
+             !article.extraction_trace?.is_listing_page &&
+             !article.extraction_trace?.is_contact_page &&
+             !article.extraction_trace?.is_advertisement &&
+             (article.extraction_trace?.content_quality_score || 100) >= 60;
+    });
+
+    // Map articles to news items format expected by the rest of the code
+    const newsItems = validArticles.map((article: any) => ({
+      title: article.title,
+      content: article.content,
+      description: article.description,
+      summary: article.description,
+      link: article.url,
+      publishedAt: new Date(article.published_at),
+      published_at: article.published_at,
+      author: article.author,
+      image: article.image,
+      category: article.category,
+      source: article.source
+    }));
+
+    // Process each news item to generate cards
+    let processedCount = 0;
+    for (const item of newsItems) {
+      // Skip if already processed recently (prevent duplicates)
+      const existingCard = await prisma.newsCard.findFirst({
+        where: {
+          sourceData: { path: ['link'], string_contains: item.link }
+        }
+      });
+
+      if (!existingCard) {
+        // Find a template to use for this item
+        const template = await prisma.template.findFirst({
+          where: {
+            OR: [
+              { category: { contains: 'NEWS', mode: 'insensitive' } },
+              { name: { contains: 'news', mode: 'insensitive' } },
+              { name: { contains: 'card', mode: 'insensitive' } }
+            ]
+          }
+        });
+
+        if (template) {
+          // Find the data mapping for this template
+          const mapping = await prisma.dataMapping.findFirst({
+            where: { templateId: template.id }
+          });
+
+          // Use image from the article data
+          const imageBuffer = item.image ? Buffer.from(item.image.replace(/^data:image\/\w+;base64,/, ''), 'base64') : null;
+
+          // Prepare the data for the template based on the mapping
+          let mappedData: Record<string, any> = {};
+          
+          if (mapping) {
+            // Use the mapping to transform the news item
+            for (const [templateField, sourceField] of Object.entries(mapping.sourceFields)) {
+              if (sourceField && item[sourceField as keyof typeof item]) {
+                mappedData[templateField] = item[sourceField as keyof typeof item];
+              } else {
+                // Use fallback or default values
+                if (templateField === 'date') {
+                  mappedData[templateField] = new Date().toISOString().split('T')[0];
+                } else if (templateField === 'title') {
+                  mappedData[templateField] = item.title || 'Untitled';
+                } else if (templateField === 'image') {
+                  mappedData[templateField] = imageBuffer ? `data:image/jpeg;base64,${imageBuffer.toString('base64')}` : '';
+                } else {
+                  mappedData[templateField] = item[sourceField as keyof typeof item] || '';
+                }
+              }
+            }
+          } else {
+            // Fallback mapping if no specific mapping exists
+            mappedData = {
+              title: item.title,
+              date: new Date().toISOString().split('T')[0],
+              subtitle: item.description || '',
+              image: item.image || '',
+            };
+          }
+
+          try {
+            // Generate the card image
+            const cardBuffer = await generateCardImage({
+              template,
+              mapping: mappedData,
+              newsItem: item
+            });
+
+            // Save the generated card to the database
+            await prisma.newsCard.create({
+              data: {
+                imageUrl: `data:image/png;base64,${cardBuffer.toString('base64')}`, // Store as base64
+                status: 'GENERATED',
+                sourceData: {
+                  ...item,
+                  image: item.image || null
+                },
+                templateId: template.id,
+                dataMappingId: mapping?.id || null,
+              }
+            });
+
+            processedCount++;
+          } catch (genError) {
+            console.error(`Failed to generate card for ${item.title}:`, genError);
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `${processedCount} news cards generated`,
+      processedCount
+    });
+  } catch (error) {
+    console.error('Error processing news from source:', error);
+    return NextResponse.json(
+      { error: 'Failed to process news', details: (error as Error).message },
+      { status: 500 }
+    );
+  }
 }

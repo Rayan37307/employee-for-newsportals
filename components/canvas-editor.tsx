@@ -3,6 +3,14 @@
 import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
 
+// Define dynamic field types
+export type DynamicField = 'title' | 'date' | 'description' | 'category' | 'author' | 'image' | 'none';
+
+export interface DynamicFieldConfig {
+  field: DynamicField;
+  fallbackValue?: string;
+}
+
 interface CanvasEditorProps {
     width?: number
     height?: number
@@ -22,19 +30,35 @@ export function CanvasEditor({
     const fabricCanvasRef = useRef<fabric.Canvas | null>(null)
     const [isReady, setIsReady] = useState(false)
     const isMounted = useRef(true)
+    const containerRef = useRef<HTMLDivElement>(null)
 
-    useEffect(() => {
-        isMounted.current = true
-        return () => { isMounted.current = false }
-    }, [])
-
-    useEffect(() => {
+    // Dispose existing canvas and create new one
+    const initCanvas = async () => {
         if (!canvasRef.current) return
+
+        // Dispose existing canvas
+        if (fabricCanvasRef.current) {
+            try {
+                fabricCanvasRef.current.dispose()
+            } catch (e) {
+                console.warn('Error disposing canvas:', e)
+            }
+            fabricCanvasRef.current = null
+        }
+
+        // Get the actual dimensions from initialData if available
+        let canvasWidth = width
+        let canvasHeight = height
+        
+        if (initialData && typeof initialData === 'object') {
+            if (initialData.width) canvasWidth = initialData.width
+            if (initialData.height) canvasHeight = initialData.height
+        }
 
         // Initialize Fabric.js canvas
         const canvas = new fabric.Canvas(canvasRef.current, {
-            width,
-            height,
+            width: canvasWidth,
+            height: canvasHeight,
             backgroundColor: '#ffffff',
             selection: !readOnly,
             preserveObjectStacking: true,
@@ -44,44 +68,45 @@ export function CanvasEditor({
 
         fabricCanvasRef.current = canvas
 
-        const initCanvas = async () => {
-            if (initialData) {
-                try {
-                    await canvas.loadFromJSON(initialData)
-                } catch (e) {
-                    console.error('Error loading initial data', e)
-                }
-            }
-
-            // Add grid background if NOT readOnly (optional, keep existing grid logic for editor?)
-            // Keeping grid logic generally useful unless readOnly? 
-            // In preview we want to see the card as is. Usually grid is for editing.
-            // If readOnly=true, maybe skip grid?
-            // The original code adds grid. I'll keep it for now or maybe skip if initialData is present (implies loading a template).
-
-            canvas.renderAll()
-            setIsReady(true)
-
-            if (onCanvasReady && isMounted.current) {
-                onCanvasReady(canvas)
+        // Load initial data if provided
+        if (initialData) {
+            try {
+                await canvas.loadFromJSON(initialData)
+            } catch (e) {
+                console.error('Error loading initial data', e)
             }
         }
 
+        canvas.renderAll()
+        setIsReady(true)
+
+        if (onCanvasReady && isMounted.current) {
+            onCanvasReady(canvas)
+        }
+    }
+
+    useEffect(() => {
+        isMounted.current = true
+        return () => { isMounted.current = false }
+    }, [])
+
+    useEffect(() => {
         initCanvas()
 
         // Cleanup on unmount
         return () => {
-            // Basic disposal
-            // Fabric might crash if disposed while loading, but we can't easily cancel.
-            // But since we use local 'canvas' var in initCanvas closure, it should be fine mostly.
-            try {
-                canvas.dispose()
-            } catch (e) { /* ignore */ }
+            if (fabricCanvasRef.current) {
+                try {
+                    fabricCanvasRef.current.dispose()
+                } catch (e) {
+                    /* ignore */
+                }
+            }
         }
-    }, [width, height, readOnly, initialData]) // removed onCanvasReady from dep array to avoid loops if function changes
+    }, [initialData]) // Re-init when initialData changes
 
     return (
-        <div className="relative bg-muted rounded-lg p-8 overflow-auto">
+        <div ref={containerRef} className="relative bg-muted rounded-lg p-8 overflow-auto">
             <div className="inline-block shadow-xl">
                 <canvas ref={canvasRef} />
             </div>
@@ -101,6 +126,7 @@ export function useCanvas() {
             fontSize: 32,
             fontFamily: 'Arial',
             fill: '#000000',
+            dynamicField: 'none' as DynamicField,
         })
 
         canvas.add(textObj)
@@ -119,6 +145,7 @@ export function useCanvas() {
             fill: '#d946ef',
             stroke: '#9333ea',
             strokeWidth: 2,
+            dynamicField: 'none' as DynamicField,
         })
 
         canvas.add(rect)
@@ -136,6 +163,7 @@ export function useCanvas() {
             fill: '#3b82f6',
             stroke: '#1d4ed8',
             strokeWidth: 2,
+            dynamicField: 'none' as DynamicField,
         })
 
         canvas.add(circle)
@@ -151,6 +179,7 @@ export function useCanvas() {
             img.set({
                 left: 100,
                 top: 100,
+                dynamicField: 'none' as DynamicField,
             })
             canvas.add(img)
             canvas.setActiveObject(img)
@@ -178,7 +207,11 @@ export function useCanvas() {
 
     const exportToJSON = () => {
         if (!canvas) return null
-        return canvas.toJSON()
+        const json = canvas.toJSON()
+        // Ensure width and height are included
+        json.width = canvas.width
+        json.height = canvas.height
+        return json
     }
 
     const exportToImage = () => {
@@ -197,6 +230,49 @@ export function useCanvas() {
         })
     }
 
+    const updateWithDynamicData = (data: Record<string, any>) => {
+        if (!canvas) return;
+
+        canvas.getObjects().forEach((obj: fabric.Object) => {
+            const dynamicField = (obj as any).dynamicField as DynamicField;
+
+            if (dynamicField && dynamicField !== 'none') {
+                if (obj.type === 'i-text' || obj.type === 'text') {
+                    const textObj = obj as fabric.IText;
+                    const value = data[dynamicField] || (obj as any).fallbackValue || textObj.text;
+
+                    if (value) {
+                        textObj.set({ text: value as string });
+                    }
+                } else if (obj.type === 'rect' || obj.type === 'circle') {
+                    if (dynamicField === 'image' && data.image) {
+                        fabric.FabricImage.fromURL(data.image).then((img: fabric.FabricImage) => {
+                            const scaleX = obj.width ? obj.width / img.width! : 1;
+                            const scaleY = obj.height ? obj.height / img.height! : 1;
+
+                            img.set({
+                                left: obj.left,
+                                top: obj.top,
+                                scaleX: scaleX,
+                                scaleY: scaleY,
+                                originX: 'left',
+                                originY: 'top',
+                            });
+
+                            canvas.remove(obj);
+                            canvas.add(img);
+                            canvas.renderAll();
+                        }).catch(err => {
+                            console.error('Error loading image:', err);
+                        });
+                    }
+                }
+            }
+        });
+
+        canvas.renderAll();
+    }
+
     return {
         canvas,
         setCanvas,
@@ -209,5 +285,6 @@ export function useCanvas() {
         exportToJSON,
         exportToImage,
         loadFromJSON,
+        updateWithDynamicData,
     }
 }

@@ -50,9 +50,8 @@ export async function POST(request: Request) {
         } else if (type === 'API') {
             if (!url) return NextResponse.json({ error: 'API endpoint URL is required' }, { status: 400 })
             config = { endpoint: url }
-        } else if (type === 'SCRAPE') {
-            if (!url) return NextResponse.json({ error: 'Website URL is required' }, { status: 400 })
-            config = { url }
+        } else if (type === 'BANGLADESH_GUARDIAN') {
+            config = { url: 'https://www.bangladeshguardian.com/latest' }
         }
 
         console.log('Creating source:', { name, type, config, userId: user.id })

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import * as fabric from 'fabric'
+import { DynamicField } from './canvas-editor'
 
 interface PropertiesPanelProps {
     canvas: fabric.Canvas | null
@@ -23,6 +24,8 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
         fontFamily: 'Arial',
         fontWeight: 'normal',
         textAlign: 'left',
+        dynamicField: 'none' as DynamicField,
+        fallbackValue: '',
     })
 
     useEffect(() => {
@@ -70,6 +73,8 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
             top: Math.round(obj.top || 0),
             angle: Math.round(obj.angle || 0),
             opacity: obj.opacity || 1,
+            dynamicField: (obj as any).dynamicField || 'none',
+            fallbackValue: (obj as any).fallbackValue || '',
         }
 
         // Type-specific properties
@@ -107,6 +112,15 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
             updates.scaleY = value / origHeight
         }
 
+        // Handle dynamic field assignment
+        if (key === 'dynamicField') {
+            (selectedObject as any).dynamicField = value;
+        }
+
+        if (key === 'fallbackValue') {
+            (selectedObject as any).fallbackValue = value;
+        }
+
         selectedObject.set(updates)
         canvas.renderAll()
         updateProperties(selectedObject)
@@ -134,6 +148,41 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
             </div>
 
             <div className="space-y-4">
+                {/* Dynamic Field Mapping */}
+                <div>
+                    <label className="text-sm font-medium mb-2 block">Dynamic Field</label>
+                    <select
+                        value={properties.dynamicField}
+                        onChange={(e) => handlePropertyChange('dynamicField', e.target.value as DynamicField)}
+                        className="w-full px-3 py-2 rounded-lg bg-input border border-border text-sm"
+                    >
+                        <option value="none">None (Static)</option>
+                        <option value="title">Title</option>
+                        <option value="date">Date</option>
+                        <option value="description">Description</option>
+                        <option value="category">Category</option>
+                        <option value="author">Author</option>
+                        <option value="image">Image (shapes only)</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        Link this element to dynamic content from Bangladesh Guardian
+                    </p>
+                </div>
+
+                {/* Fallback Value (when dynamic field is set) */}
+                {properties.dynamicField !== 'none' && (
+                    <div>
+                        <label className="text-sm font-medium mb-2 block">Fallback Value</label>
+                        <input
+                            type="text"
+                            value={properties.fallbackValue}
+                            onChange={(e) => handlePropertyChange('fallbackValue', e.target.value)}
+                            placeholder="Default value if dynamic data is unavailable"
+                            className="w-full px-3 py-2 rounded-lg bg-input border border-border text-sm"
+                        />
+                    </div>
+                )}
+
                 {/* Position */}
                 <div>
                     <label className="text-sm font-medium mb-2 block">Position</label>

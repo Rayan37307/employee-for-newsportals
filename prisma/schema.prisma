@@ -1,7 +1,3 @@
-// Database Schema for News Card Automation Platform
-// Generated with: npx prisma generate
-// Migrate: npx prisma migrate dev
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,35 +7,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============================================
-// Authentication & User Management
-// ============================================
-
-enum UserRole {
-  USER
-  ADMIN
-}
-
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String    @unique
-  emailVerified DateTime?
-  image         String?
-  password      String?   // Hashed password for credentials provider
-  role          UserRole  @default(USER)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  // Relations
+  id             String          @id @default(cuid())
+  name           String?
+  email          String          @unique
+  emailVerified  DateTime?
+  image          String?
+  password       String?
+  role           UserRole        @default(USER)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
   accounts       Account[]
-  sessions       Session[]
-  templates      Template[]
-  newsSources    NewsSource[]
   dataMappings   DataMapping[]
-
-  socialAccounts SocialAccount[]
+  newsSources    NewsSource[]
   notifications  Notification[]
+  sessions       Session[]
+  socialAccounts SocialAccount[]
+  templates      Template[]
 
   @@map("users")
 }
@@ -50,15 +34,14 @@ model Account {
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
+  refresh_token     String?
+  access_token      String?
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String? @db.Text
+  id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
   @@map("accounts")
@@ -83,9 +66,162 @@ model VerificationToken {
   @@map("verification_tokens")
 }
 
-// ============================================
-// Template Management
-// ============================================
+model Template {
+  id           String           @id @default(cuid())
+  name         String
+  description  String?
+  category     TemplateCategory @default(CUSTOM)
+  canvasData   Json
+  thumbnail    String?
+  isPublic     Boolean          @default(false)
+  isSystem     Boolean          @default(false)
+  userId       String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  dataMappings DataMapping[]
+  newsCards    NewsCard[]
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([category])
+  @@map("templates")
+}
+
+model NewsSource {
+  id              String        @id @default(cuid())
+  name            String
+  type            SourceType
+  config          Json
+  updateFrequency Int           @default(60)
+  enabled         Boolean       @default(true)
+  lastFetchedAt   DateTime?
+  lastError       String?
+  userId          String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  dataMappings    DataMapping[]
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([enabled])
+  @@map("news_sources")
+}
+
+model DataMapping {
+  id              String     @id @default(cuid())
+  newsSourceId    String
+  templateId      String
+  sourceFields    Json
+  transformations Json?
+  fallbackValues  Json?
+  userId          String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  newsSource      NewsSource @relation(fields: [newsSourceId], references: [id], onDelete: Cascade)
+  template        Template   @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newsCards       NewsCard[]
+
+  @@index([newsSourceId])
+  @@index([templateId])
+  @@index([userId])
+  @@map("data_mappings")
+}
+
+model NewsCard {
+  id            String       @id @default(cuid())
+  imageUrl      String?
+  status        CardStatus   @default(DRAFT)
+  sourceData    Json
+  templateId    String
+  dataMappingId String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  dataMapping   DataMapping? @relation(fields: [dataMappingId], references: [id])
+  template      Template     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  posts         Post[]
+
+  @@index([templateId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("news_cards")
+}
+
+model SocialAccount {
+  id             String         @id @default(cuid())
+  platform       SocialPlatform
+  pageId         String
+  pageName       String
+  accessToken    String
+  refreshToken   String?
+  tokenExpiresAt DateTime?
+  isActive       Boolean        @default(true)
+  userId         String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  posts          Post[]
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([platform, pageId])
+  @@index([userId])
+  @@map("social_accounts")
+}
+
+model Post {
+  id              String        @id @default(cuid())
+  content         String
+  scheduledFor    DateTime?
+  postedAt        DateTime?
+  status          PostStatus    @default(QUEUED)
+  errorMessage    String?
+  platformUrl     String?
+  platformPostId  String?
+  metrics         Json?
+  newsCardId      String
+  socialAccountId String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  newsCard        NewsCard      @relation(fields: [newsCardId], references: [id], onDelete: Cascade)
+  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledFor])
+  @@index([newsCardId])
+  @@index([socialAccountId])
+  @@map("posts")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+  @@map("notifications")
+}
+
+model PostedLink {
+  id        String   @id @default(cuid())
+  url       String   @unique
+  title     String
+  source    String   @default("bangladesh_guardian")
+  postedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  @@index([url])
+  @@index([source])
+  @@map("posted_links")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
 
 enum TemplateCategory {
   BREAKING_NEWS
@@ -97,177 +233,21 @@ enum TemplateCategory {
   CUSTOM
 }
 
-model Template {
-  id          String           @id @default(cuid())
-  name        String
-  description String?
-  category    TemplateCategory @default(CUSTOM)
-  
-  // Canvas data stored as JSON (Fabric.js canvas state)
-  canvasData  Json
-  
-  // Thumbnail preview image URL
-  thumbnail   String?
-  
-  // Template visibility
-  isPublic    Boolean          @default(false)
-  isSystem    Boolean          @default(false) // System templates cannot be deleted
-  
-  // Ownership
-  userId      String
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Timestamps
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-
-  // Relations
-  dataMappings DataMapping[]
-  newsCards    NewsCard[]
-
-  @@index([userId])
-  @@index([category])
-  @@map("templates")
-}
-
-// ============================================
-// News Source Management
-// ============================================
-
 enum SourceType {
   RSS
   API
   MANUAL
   AUTO
+  BANGLADESH_GUARDIAN
 }
-
-model NewsSource {
-  id              String     @id @default(cuid())
-  name            String
-  type            SourceType
-  
-  // Configuration stored as JSON
-  // For RSS: { url: string, category?: string }
-  // For API: { endpoint: string, apiKey?: string, headers?: object }
-  // For Manual: empty object
-  // For AUTO: { url: string, usePuppeteer?: boolean, customSelectors?: object }
-  config          Json
-  
-  // Update settings
-  updateFrequency Int        @default(60) // Minutes between updates
-  enabled         Boolean    @default(true)
-  
-  // Last fetch info
-  lastFetchedAt   DateTime?
-  lastError       String?
-  
-  // Ownership
-  userId          String
-  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Timestamps
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
-
-  // Relations
-  dataMappings    DataMapping[]
-
-  @@index([userId])
-  @@index([enabled])
-  @@map("news_sources")
-}
-
-// ============================================
-// Data Mapping System
-// ============================================
-
-model DataMapping {
-  id             String   @id @default(cuid())
-  
-  // Source configuration
-  newsSourceId   String
-  newsSource     NewsSource @relation(fields: [newsSourceId], references: [id], onDelete: Cascade)
-  
-  // Template configuration
-  templateId     String
-  template       Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  
-  // Field mappings stored as JSON
-  // Example: { title: "item.title", subtitle: "item.description", image: "item.thumbnail", date: "item.pubDate" }
-  sourceFields   Json
-  
-  // Transformations for each field
-  // Example: { title: { transform: "uppercase" }, date: { format: "MMM dd, yyyy" } }
-  transformations Json?
-  
-  // Fallback values when source data is missing
-  fallbackValues Json?
-  
-  // Ownership
-  userId         String
-  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Timestamps
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  // Relations
-  newsCards      NewsCard[]
-
-  @@index([newsSourceId])
-  @@index([templateId])
-  @@index([userId])
-  @@map("data_mappings")
-}
-
-// ============================================
-// News Card Generation
-// ============================================
 
 enum CardStatus {
   DRAFT
-  QUEUED
   GENERATED
   POSTED
   FAILED
+  QUEUED
 }
-
-model NewsCard {
-  id            String      @id @default(cuid())
-  
-  // Generated image URL (stored in public folder or CDN)
-  imageUrl      String?
-  
-  // Status tracking
-  status        CardStatus  @default(DRAFT)
-  
-  // Source data snapshot (JSON)
-  sourceData    Json
-  
-  // Template used
-  templateId    String
-  template      Template    @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  
-  // Data mapping used
-  dataMappingId String?
-  dataMapping   DataMapping? @relation(fields: [dataMappingId], references: [id], onDelete: SetNull)
-  
-  // Timestamps
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-
-  // Relations
-  posts         Post[]
-
-  @@index([templateId])
-  @@index([status])
-  @@index([createdAt])
-  @@map("news_cards")
-}
-
-// ============================================
-// Social Media Integration
-// ============================================
 
 enum SocialPlatform {
   FACEBOOK
@@ -276,104 +256,9 @@ enum SocialPlatform {
   INSTAGRAM
 }
 
-model SocialAccount {
-  id                String         @id @default(cuid())
-  platform          SocialPlatform
-  
-  // Platform-specific identifiers
-  pageId            String
-  pageName          String
-  
-  // Access credentials (encrypted in production)
-  accessToken       String         @db.Text
-  refreshToken      String?        @db.Text
-  tokenExpiresAt    DateTime?
-  
-  // Account status
-  isActive          Boolean        @default(true)
-  
-  // Ownership
-  userId            String
-  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Timestamps
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-
-  // Relations
-  posts             Post[]
-
-  @@unique([platform, pageId])
-  @@index([userId])
-  @@map("social_accounts")
-}
-
-// ============================================
-// Publishing Queue & History
-// ============================================
-
 enum PostStatus {
   QUEUED
   POSTING
   POSTED
   FAILED
-}
-
-model Post {
-  id              String        @id @default(cuid())
-  
-  // Content
-  content         String        @db.Text
-  
-  // Scheduling
-  scheduledFor    DateTime?
-  postedAt        DateTime?
-  
-  // Status tracking
-  status          PostStatus    @default(QUEUED)
-  errorMessage    String?
-  
-  // Platform URL (link to actual post)
-  platformUrl     String?
-  platformPostId  String?
-  
-  // Performance metrics (stored as JSON)
-  // Example: { likes: 0, shares: 0, comments: 0, reach: 0, impressions: 0 }
-  metrics         Json?
-  
-  // Relations
-  newsCardId      String
-  newsCard        NewsCard      @relation(fields: [newsCardId], references: [id], onDelete: Cascade)
-  
-  socialAccountId String
-  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
-  
-  // Timestamps
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  @@index([scheduledFor])
-  @@index([newsCardId])
-  @@index([socialAccountId])
-  @@map("posts")
-}
-
-// ============================================
-// Notifications
-// ============================================
-
-model Notification {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title     String
-  message   String
-  read      Boolean  @default(false)
-  link      String?  // Optional link to related resource
-  
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@index([read])
-  @@map("notifications")
 }

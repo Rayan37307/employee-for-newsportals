@@ -9,7 +9,7 @@ export const postSchema = z.object({
 
 export const newsSourceSchema = z.object({
     name: z.string().min(1),
-    type: z.enum(['RSS', 'API', 'MANUAL']),
+    type: z.enum(['RSS', 'API', 'MANUAL', 'BANGLADESH_GUARDIAN']),
     config: z.record(z.any())
 })
 
