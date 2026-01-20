@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
 
-// Define dynamic field types
 export type DynamicField = 'title' | 'date' | 'description' | 'category' | 'author' | 'image' | 'none';
 
 export interface DynamicFieldConfig {
@@ -32,11 +31,9 @@ export function CanvasEditor({
     const isMounted = useRef(true)
     const containerRef = useRef<HTMLDivElement>(null)
 
-    // Dispose existing canvas and create new one
     const initCanvas = async () => {
         if (!canvasRef.current) return
 
-        // Dispose existing canvas
         if (fabricCanvasRef.current) {
             try {
                 fabricCanvasRef.current.dispose()
@@ -46,7 +43,6 @@ export function CanvasEditor({
             fabricCanvasRef.current = null
         }
 
-        // Get the actual dimensions from initialData if available
         let canvasWidth = width
         let canvasHeight = height
         
@@ -55,7 +51,6 @@ export function CanvasEditor({
             if (initialData.height) canvasHeight = initialData.height
         }
 
-        // Initialize Fabric.js canvas
         const canvas = new fabric.Canvas(canvasRef.current, {
             width: canvasWidth,
             height: canvasHeight,
@@ -68,12 +63,24 @@ export function CanvasEditor({
 
         fabricCanvasRef.current = canvas
 
-        // Load initial data if provided
         if (initialData) {
             try {
                 await canvas.loadFromJSON(initialData)
+                // Restore custom properties after loading
+                if (initialData.objects && Array.isArray(initialData.objects)) {
+                    canvas.getObjects().forEach((obj, index) => {
+                        if (initialData.objects[index]) {
+                            if (initialData.objects[index].dynamicField !== undefined) {
+                                (obj as any).dynamicField = initialData.objects[index].dynamicField
+                            }
+                            if (initialData.objects[index].fallbackValue !== undefined) {
+                                (obj as any).fallbackValue = initialData.objects[index].fallbackValue
+                            }
+                        }
+                    })
+                }
             } catch (e) {
-                console.error('Error loading initial data', e)
+                console.error('Error loading initial data:', e)
             }
         }
 
@@ -93,7 +100,6 @@ export function CanvasEditor({
     useEffect(() => {
         initCanvas()
 
-        // Cleanup on unmount
         return () => {
             if (fabricCanvasRef.current) {
                 try {
@@ -103,7 +109,7 @@ export function CanvasEditor({
                 }
             }
         }
-    }, [initialData]) // Re-init when initialData changes
+    }, [initialData])
 
     return (
         <div ref={containerRef} className="relative bg-muted rounded-lg p-8 overflow-auto">
@@ -126,7 +132,7 @@ export function useCanvas() {
             fontSize: 32,
             fontFamily: 'Arial',
             fill: '#000000',
-            dynamicField: 'none' as DynamicField,
+            dynamicField: 'none',
         })
 
         canvas.add(textObj)
@@ -145,7 +151,7 @@ export function useCanvas() {
             fill: '#d946ef',
             stroke: '#9333ea',
             strokeWidth: 2,
-            dynamicField: 'none' as DynamicField,
+            dynamicField: 'none',
         })
 
         canvas.add(rect)
@@ -163,7 +169,7 @@ export function useCanvas() {
             fill: '#3b82f6',
             stroke: '#1d4ed8',
             strokeWidth: 2,
-            dynamicField: 'none' as DynamicField,
+            dynamicField: 'none',
         })
 
         canvas.add(circle)
@@ -179,7 +185,7 @@ export function useCanvas() {
             img.set({
                 left: 100,
                 top: 100,
-                dynamicField: 'none' as DynamicField,
+                dynamicField: 'none',
             })
             canvas.add(img)
             canvas.setActiveObject(img)
@@ -207,8 +213,29 @@ export function useCanvas() {
 
     const exportToJSON = () => {
         if (!canvas) return null
+        
         const json = canvas.toJSON()
-        // Ensure width and height are included
+        
+        // Add custom properties to each object
+        const objects = canvas.getObjects()
+        if (json.objects && Array.isArray(json.objects)) {
+            objects.forEach((obj, index) => {
+                if (json.objects[index]) {
+                    const dynamicField = (obj as any).dynamicField
+                    if (dynamicField !== undefined) {
+                        json.objects[index].dynamicField = dynamicField
+                    } else {
+                        json.objects[index].dynamicField = 'none'
+                    }
+                    
+                    const fallbackValue = (obj as any).fallbackValue
+                    if (fallbackValue !== undefined) {
+                        json.objects[index].fallbackValue = fallbackValue
+                    }
+                }
+            })
+        }
+        
         json.width = canvas.width
         json.height = canvas.height
         return json
@@ -226,29 +253,41 @@ export function useCanvas() {
     const loadFromJSON = (json: any) => {
         if (!canvas) return
         canvas.loadFromJSON(json).then(() => {
+            if (json.objects && Array.isArray(json.objects)) {
+                canvas.getObjects().forEach((obj, index) => {
+                    if (json.objects[index]) {
+                        if (json.objects[index].dynamicField !== undefined) {
+                            (obj as any).dynamicField = json.objects[index].dynamicField
+                        }
+                        if (json.objects[index].fallbackValue !== undefined) {
+                            (obj as any).fallbackValue = json.objects[index].fallbackValue
+                        }
+                    }
+                })
+            }
             canvas.renderAll()
         })
     }
 
     const updateWithDynamicData = (data: Record<string, any>) => {
-        if (!canvas) return;
+        if (!canvas) return
 
         canvas.getObjects().forEach((obj: fabric.Object) => {
-            const dynamicField = (obj as any).dynamicField as DynamicField;
+            const dynamicField = (obj as any).dynamicField as DynamicField
 
             if (dynamicField && dynamicField !== 'none') {
                 if (obj.type === 'i-text' || obj.type === 'text') {
-                    const textObj = obj as fabric.IText;
-                    const value = data[dynamicField] || (obj as any).fallbackValue || textObj.text;
+                    const textObj = obj as fabric.IText
+                    const value = data[dynamicField] || (obj as any).fallbackValue || textObj.text
 
                     if (value) {
-                        textObj.set({ text: value as string });
+                        textObj.set({ text: value as string })
                     }
                 } else if (obj.type === 'rect' || obj.type === 'circle') {
                     if (dynamicField === 'image' && data.image) {
                         fabric.FabricImage.fromURL(data.image).then((img: fabric.FabricImage) => {
-                            const scaleX = obj.width ? obj.width / img.width! : 1;
-                            const scaleY = obj.height ? obj.height / img.height! : 1;
+                            const scaleX = obj.width ? obj.width / img.width! : 1
+                            const scaleY = obj.height ? obj.height / img.height! : 1
 
                             img.set({
                                 left: obj.left,
@@ -257,20 +296,20 @@ export function useCanvas() {
                                 scaleY: scaleY,
                                 originX: 'left',
                                 originY: 'top',
-                            });
+                            })
 
-                            canvas.remove(obj);
-                            canvas.add(img);
-                            canvas.renderAll();
+                            canvas.remove(obj)
+                            canvas.add(img)
+                            canvas.renderAll()
                         }).catch(err => {
-                            console.error('Error loading image:', err);
-                        });
+                            console.error('Error loading image:', err)
+                        })
                     }
                 }
             }
-        });
+        })
 
-        canvas.renderAll();
+        canvas.renderAll()
     }
 
     return {

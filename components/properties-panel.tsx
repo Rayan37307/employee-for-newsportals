@@ -115,10 +115,13 @@ export function PropertiesPanel({ canvas }: PropertiesPanelProps) {
         // Handle dynamic field assignment
         if (key === 'dynamicField') {
             (selectedObject as any).dynamicField = value;
+            // Also call set to notify fabric.js about the change
+            selectedObject.set('dynamicField', value)
         }
 
         if (key === 'fallbackValue') {
             (selectedObject as any).fallbackValue = value;
+            selectedObject.set('fallbackValue', value)
         }
 
         selectedObject.set(updates)
