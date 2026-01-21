@@ -102,6 +102,7 @@ export default function CardsPage() {
   const [generating, setGenerating] = useState(false)
   const [selectedArticle, setSelectedArticle] = useState<string>('')
   const [selectedTemplate, setSelectedTemplate] = useState<string>('')
+  const [previewArticle, setPreviewArticle] = useState<Article | null>(null)
   const [generatedCard, setGeneratedCard] = useState<any>(null)
   const [activeTab, setActiveTab] = useState<'create' | 'view'>('create')
   const [error, setError] = useState<string | null>(null)
@@ -113,6 +114,14 @@ export default function CardsPage() {
     fetchTemplates()
     fetchCards()
   }, [])
+
+  // Clear previewArticle when selected article changes
+  useEffect(() => {
+    if (selectedArticle) {
+      console.log(`[CardsPage] Selected article changed to: ${selectedArticle}`)
+      setPreviewArticle(null)
+    }
+  }, [selectedArticle])
 
   const fetchArticles = async () => {
     try {
@@ -143,23 +152,33 @@ export default function CardsPage() {
 
   // Fetch full article data including content and image
   const fetchFullArticleData = async (article: Article): Promise<Article> => {
+    console.log(`[CardsPage][FetchFullArticle] START: ${article.title?.substring(0, 40)}`)
+    
     // If we already have content, return as is
-    if (article.description && article.content) {
+    if (article.description && article.content && article.image) {
+      console.log(`[CardsPage][FetchFullArticle] SKIP: Article already has full data`)
       return article
     }
     
     try {
       // Fetch article image
       let imageUrl = article.image
+      console.log(`[CardsPage][FetchFullArticle] Initial image: ${imageUrl ? 'present' : 'null'}`)
+      
       if (!imageUrl) {
+        console.log(`[CardsPage][FetchFullArticle] Fetching image from API: ${article.link.substring(0, 60)}...`)
         const imageResponse = await fetch(`/api/bangladesh-guardian/image?url=${encodeURIComponent(article.link)}`)
         if (imageResponse.ok) {
           const imageData = await imageResponse.json()
+          console.log(`[CardsPage][FetchFullArticle] Image API response: ${imageData.image ? 'found' : 'null'}`)
           imageUrl = imageData.image
+        } else {
+          console.warn(`[CardsPage][FetchFullArticle] Image API failed: status=${imageResponse.status}`)
         }
       }
 
       // Fetch article content using the main API
+      console.log(`[CardsPage][FetchFullArticle] Fetching article content...`)
       const response = await fetch('/api/bangladesh-guardian')
       const data = await response.json()
       
@@ -167,6 +186,7 @@ export default function CardsPage() {
         // Find matching article
         const fullArticle = data.articles.find((a: any) => a.link === article.link)
         if (fullArticle) {
+          console.log(`[CardsPage][FetchFullArticle] Found full article: title=${fullArticle.title?.substring(0, 40)}, image=${fullArticle.image ? 'present' : 'null'}`)
           return {
             ...article,
             image: fullArticle.image || imageUrl,
@@ -236,20 +256,27 @@ export default function CardsPage() {
     const template = templates.find(t => t.id === selectedTemplate)
     if (!article || !template) return
 
+    console.log(`[CardsPage][Generate] START: article=${article.title?.substring(0, 40)}, template=${template.name}`)
+
     setGenerating(true)
     setError(null)
     setGeneratedCard(null)
 
     try {
       // Fetch full article data
+      console.log(`[CardsPage][Generate] Fetching full article data...`)
       const fullArticle = await fetchFullArticleData(article)
-      console.log('Full article data:', {
-        title: fullArticle.title,
-        description: fullArticle.description ? fullArticle.description.substring(0, 50) + '...' : 'N/A',
-        image: fullArticle.image ? fullArticle.image.substring(0, 50) + '...' : 'N/A'
+      console.log(`[CardsPage][Generate] Full article data:`, {
+        title: fullArticle.title?.substring(0, 40),
+        description: fullArticle.description ? 'present' : 'N/A',
+        image: fullArticle.image ? 'present' : 'N/A'
       })
 
-      // Wait for preview to render
+      // Update preview with full article data (including image)
+      console.log(`[CardsPage][Generate] Updating preview article...`)
+      setPreviewArticle(fullArticle)
+
+      // Wait for preview to render with new data
       await new Promise(resolve => setTimeout(resolve, 100))
 
       if (!cardPreviewRef.current) {
@@ -261,6 +288,8 @@ export default function CardsPage() {
         ? JSON.parse(template.canvasData) 
         : template.canvasData
       const { width, height } = getCanvasDimensions(canvasData)
+
+      console.log(`[CardsPage][Generate] Capturing card: ${width}x${height}`)
 
       // Create a temporary container for capturing at full size
       const captureContainer = document.createElement('div')
@@ -339,14 +368,10 @@ export default function CardsPage() {
     }
   }
 
-  const truncateText = (text: string, maxLength: number) => {
-    if (!text) return ''
-    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text
-  }
-
   const renderCardPreview = () => {
     const template = templates.find(t => t.id === selectedTemplate)
-    const article = articles.find(a => a.id === selectedArticle)
+    // Use previewArticle if available (from fetchFullArticleData), otherwise fall back to selected article
+    const article = previewArticle || articles.find(a => a.id === selectedArticle)
     
     if (!template || !article) return null
 
@@ -398,14 +423,20 @@ export default function CardsPage() {
                 ? formatDate(article.publishedAt)
                 : ''
             } else if (['subtitle', 'description', 'description_1', 'description'].includes(dynamicField)) {
-              text = article.description ? truncateText(article.description, 200) : ''
+              text = article.description ? article.description : ''
             } else if (dynamicField === 'author') {
               text = article.author || ''
             } else if (dynamicField === 'category') {
               text = article.category || ''
             }
 
-            console.log('  Final text:', text.substring(0, 50) + '...')
+            const objWidth = (obj.width || 200) * (obj.scaleX || 1)
+            const objHeight = (obj.height || 50) * (obj.scaleY || 1)
+            const fontSize = obj.fontSize || 24
+            const fontSizeScaled = fontSize * (obj.scaleX || 1)
+            const lineHeight = obj.lineHeight || 1.2
+
+            console.log(`  Text obj: width=${obj.width}, scaleX=${obj.scaleX}, calculatedWidth=${objWidth}, fontSize=${fontSize}, scaledFontSize=${fontSizeScaled}`)
 
             return (
               <div
@@ -414,15 +445,16 @@ export default function CardsPage() {
                   position: 'absolute',
                   left: left,
                   top: top,
-                  width: obj.width || 300,
-                  fontSize: (obj.fontSize || 18) * (obj.scaleX || 1),
+                  width: objWidth,
+                  minHeight: objHeight,
+                  fontSize: `${fontSizeScaled}px`,
                   color: obj.fill || '#000000',
                   fontFamily: obj.fontFamily || 'Arial, sans-serif',
                   fontWeight: obj.fontWeight || 'normal',
                   fontStyle: obj.fontStyle || 'normal',
-                  lineHeight: obj.lineHeight || 1.2,
+                  lineHeight: lineHeight,
                   whiteSpace: 'pre-wrap',
-                  wordWrap: 'break-word',
+                  overflow: 'hidden',
                   textAlign: obj.textAlign || 'left',
                   textDecoration: obj.underline ? 'underline' : 
                                  obj.linethrough ? 'line-through' : 'none',

@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getLatestNews } from '@/lib/bangladesh-guardian-agent';
 import prisma from '@/lib/db';
-import { generateCardImage } from '@/lib/card-generator';
+import { generateCardImage } from '@/lib/card-generator-puppeteer';
+import { compositeImage, getImagePlaceholder } from '@/lib/image-processor';
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id: sourceId } = await params;
+  try {
+    const { id: sourceId } = await params;
 
     if (!sourceId) {
       return NextResponse.json({ error: 'Source ID is required' }, { status: 400 });
@@ -218,13 +220,46 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             };
           }
 
-          try {
-            // Generate the card image
-            const cardBuffer = await generateCardImage({
+            try {
+            const logPrefix = '[Sources][Fetch][Image]';
+            console.log(`${logPrefix} Processing card for: ${item.title?.substring(0, 30) || 'unknown'}`);
+
+            // Generate the card image (text only)
+            console.log(`${logPrefix} Generating base card...`);
+            let cardBuffer = await generateCardImage({
               template,
               mapping: mappedData,
               newsItem: item
             });
+            console.log(`${logPrefix} Base card generated: ${cardBuffer.length} bytes`);
+
+            // If we have an image, composite it onto the card
+            if (item.image) {
+              console.log(`${logPrefix} Image present: ${item.image.startsWith('data:') ? 'dataurl' : item.image.substring(0, 60)}`);
+              const canvasData = typeof template.canvasData === 'string'
+                ? JSON.parse(template.canvasData)
+                : template.canvasData;
+
+              console.log(`${logPrefix} Searching for placeholder...`);
+              const placeholder = getImagePlaceholder(canvasData);
+
+              if (placeholder) {
+                console.log(`${logPrefix} Placeholder found: (${placeholder.x}, ${placeholder.y}) size ${placeholder.width}x${placeholder.height}`);
+                console.log(`${logPrefix} Starting compositing...`);
+                cardBuffer = await compositeImage(cardBuffer, {
+                  imageUrl: item.image,
+                  placeholderX: placeholder.x,
+                  placeholderY: placeholder.y,
+                  placeholderWidth: Math.round(placeholder.width),
+                  placeholderHeight: Math.round(placeholder.height)
+                });
+                console.log(`${logPrefix} Compositing complete: ${cardBuffer.length} bytes`);
+              } else {
+                console.warn(`${logPrefix} WARNING: No placeholder found - skipping compositing`);
+              }
+            } else {
+              console.log(`${logPrefix} INFO: No image in item - skipping compositing`);
+            }
 
             // Save the generated card to the database
             await prisma.newsCard.create({
@@ -241,8 +276,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             });
 
             processedCount++;
+            console.log(`${logPrefix} SUCCESS: Card generated (id=${mapping?.id || 'none'}, processed=${processedCount})`);
           } catch (genError) {
-            console.error(`Failed to generate card for ${item.title}:`, genError);
+            const errorMessage = genError instanceof Error ? genError.message : 'Unknown error';
+            console.error(`${logPrefix} ERROR: ${errorMessage}`);
           }
         }
       }

@@ -1,7 +1,8 @@
 
 import db from '@/lib/db'
 import { getCurrentUser } from '@/lib/session'
-import { generateCardImage } from '@/lib/card-generator'
+import { generateCardImage } from '@/lib/card-generator-puppeteer'
+import { compositeImage, getImagePlaceholder } from '@/lib/image-processor'
 import { publishToFacebook } from '@/lib/social-publisher'
 import { NextResponse } from 'next/server'
 
@@ -91,11 +92,29 @@ export async function POST(req: Request) {
 
 
         // 3. Generate Image
-        const imageBuffer = await generateCardImage({
+        let imageBuffer = await generateCardImage({
             template: template,
             mapping: mapping.sourceFields,
             newsItem: newsItem
         })
+
+        // 3.5 Composite image if available
+        if (newsItem.image) {
+            const canvasData = typeof template.canvasData === 'string'
+                ? JSON.parse(template.canvasData)
+                : template.canvasData;
+            const placeholder = getImagePlaceholder(canvasData);
+
+            if (placeholder) {
+                imageBuffer = await compositeImage(imageBuffer, {
+                    imageUrl: newsItem.image,
+                    placeholderX: placeholder.x,
+                    placeholderY: placeholder.y,
+                    placeholderWidth: Math.round(placeholder.width),
+                    placeholderHeight: Math.round(placeholder.height)
+                });
+            }
+        }
 
         // 4. Construct Caption
         // Check mapping for caption field

@@ -1,5 +1,6 @@
 import { getLatestNews, fetchArticleImage } from '@/lib/bangladesh-guardian-agent';
 import { generateCardImage } from '@/lib/card-generator-puppeteer';
+import { compositeImage, getImagePlaceholder } from '@/lib/image-processor';
 import prisma from '@/lib/db';
 
 class AutopilotService {
@@ -48,10 +49,19 @@ class AutopilotService {
 
               // Fetch image for the article
               let imageBuffer = null;
+              const logPrefix = '[Autopilot][Image]';
+              console.log(`${logPrefix} Fetching image for: ${newsItem.title.substring(0, 50)}...`);
+
               try {
                 imageBuffer = await fetchArticleImage(newsItem.link);
+                if (imageBuffer) {
+                  console.log(`${logPrefix} SUCCESS: Fetched article image (${imageBuffer.length} bytes)`);
+                } else {
+                  console.log(`${logPrefix} INFO: No image found for article (fetchArticleImage returned null)`);
+                }
               } catch (error) {
-                console.error(`Failed to fetch image for ${newsItem.link}:`, error);
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                console.error(`${logPrefix} ERROR: Failed to fetch image - ${errorMessage}`);
               }
 
               // Prepare the data for the template based on the mapping
@@ -70,6 +80,7 @@ class AutopilotService {
                       mappedData[templateField] = newsItem.title || 'Untitled';
                     } else if (templateField === 'image') {
                       mappedData[templateField] = imageBuffer ? `data:image/jpeg;base64,${imageBuffer.toString('base64')}` : '';
+                      console.log(`${logPrefix} Mapped image field: ${imageBuffer ? `dataurl (${imageBuffer.length} bytes)` : 'empty'}`);
                     } else {
                       mappedData[templateField] = newsItem[sourceField as keyof typeof newsItem] || '';
                     }
@@ -83,11 +94,13 @@ class AutopilotService {
                   subtitle: newsItem.description || '',
                   image: imageBuffer ? `data:image/jpeg;base64,${imageBuffer.toString('base64')}` : '',
                 };
+                console.log(`${logPrefix} Using fallback mapping: image=${imageBuffer ? `dataurl (${imageBuffer.length} bytes)` : 'empty'}`);
               }
 
               try {
                 // Generate a news card using the template
-                const cardBuffer = await generateCardImage({
+                console.log(`${logPrefix} Generating card base (text only)...`);
+                let cardBuffer = await generateCardImage({
                   template,
                   mapping: mappedData,
                   newsItem: {
@@ -95,6 +108,36 @@ class AutopilotService {
                     image: imageBuffer ? `data:image/jpeg;base64,${imageBuffer.toString('base64')}` : null
                   }
                 });
+                console.log(`${logPrefix} Card base generated: ${cardBuffer.length} bytes`);
+
+                // If we have an image, composite it onto the card
+                if (imageBuffer) {
+                  const imageDataUrl = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+                  const canvasData = typeof template.canvasData === 'string'
+                    ? JSON.parse(template.canvasData)
+                    : template.canvasData;
+
+                  console.log(`${logPrefix} Searching for image placeholder in template...`);
+                  const placeholder = getImagePlaceholder(canvasData);
+
+                  if (placeholder) {
+                    console.log(`${logPrefix} Placeholder found: (${placeholder.x}, ${placeholder.y}) size ${placeholder.width}x${placeholder.height}`);
+                    console.log(`${logPrefix} Starting image compositing...`);
+                    cardBuffer = await compositeImage(cardBuffer, {
+                      imageUrl: imageDataUrl,
+                      placeholderX: placeholder.x,
+                      placeholderY: placeholder.y,
+                      placeholderWidth: Math.round(placeholder.width),
+                      placeholderHeight: Math.round(placeholder.height)
+                    });
+                    console.log(`${logPrefix} Image compositing complete: ${cardBuffer.length} bytes`);
+                  } else {
+                    console.warn(`${logPrefix} WARNING: No image placeholder found in template - skipping image compositing`);
+                    console.log(`${logPrefix} Hint: Add a rectangle with dynamicField='image' to the template`);
+                  }
+                } else {
+                  console.log(`${logPrefix} INFO: No image buffer available - skipping compositing`);
+                }
 
                 // Save the generated news card
                 await prisma.newsCard.create({
@@ -110,9 +153,14 @@ class AutopilotService {
                   }
                 });
 
-                console.log(`✅ Generated news card for: ${newsItem.title.substring(0, 50)}...`);
+                console.log(`${logPrefix} SUCCESS: Generated and saved news card for: ${newsItem.title.substring(0, 50)}...`);
               } catch (genError) {
-                console.error(`❌ Failed to generate card for ${newsItem.title}:`, genError);
+                const errorMessage = genError instanceof Error ? genError.message : 'Unknown error';
+                const errorStack = genError instanceof Error ? genError.stack : '';
+                console.error(`${logPrefix} ERROR: Failed to generate card - ${errorMessage}`);
+                if (errorStack) {
+                  console.error(`${logPrefix} Stack: ${errorStack.split('\n').slice(0, 3).join('\n')}`);
+                }
               }
             } else {
               console.log('No suitable template found for news item');

@@ -1,6 +1,7 @@
 
 import db from '@/lib/db'
-import { generateCardImage } from '@/lib/card-generator'
+import { generateCardImage } from '@/lib/card-generator-puppeteer'
+import { compositeImage, getImagePlaceholder } from '@/lib/image-processor'
 import { publishToFacebook } from '@/lib/social-publisher'
 
 export async function processScheduledPosts() {
@@ -26,8 +27,9 @@ export async function processScheduledPosts() {
     const results = []
 
     for (const post of posts) {
+        const logPrefix = '[Scheduler][Image]';
         try {
-            console.log(`[Scheduler] Processing post ${post.id}`)
+            console.log(`${logPrefix} Processing post ${post.id}`);
 
             const { newsCard, socialAccount } = post
             if (!newsCard || !socialAccount) {
@@ -44,13 +46,44 @@ export async function processScheduledPosts() {
                 throw new Error('Missing source data or template')
             }
 
-            const imageBuffer = await generateCardImage({
+            console.log(`${logPrefix} Generating card for scheduled post...`);
+            let imageBuffer = await generateCardImage({
                 template: newsCard.template,
                 mapping: mapping,
                 newsItem: newsItem
-            })
+            });
+            console.log(`${logPrefix} Base card generated: ${imageBuffer.length} bytes`);
+
+            // Composite image if available in the news item
+            if (newsItem.image) {
+                console.log(`${logPrefix} Image present: ${newsItem.image.startsWith('data:') ? 'dataurl' : newsItem.image.substring(0, 60)}`);
+                const canvasData = typeof newsCard.template.canvasData === 'string'
+                    ? JSON.parse(newsCard.template.canvasData)
+                    : newsCard.template.canvasData;
+
+                console.log(`${logPrefix} Searching for placeholder...`);
+                const placeholder = getImagePlaceholder(canvasData);
+
+                if (placeholder) {
+                    console.log(`${logPrefix} Placeholder found: (${placeholder.x}, ${placeholder.y}) size ${placeholder.width}x${placeholder.height}`);
+                    console.log(`${logPrefix} Starting compositing...`);
+                    imageBuffer = await compositeImage(imageBuffer, {
+                        imageUrl: newsItem.image,
+                        placeholderX: placeholder.x,
+                        placeholderY: placeholder.y,
+                        placeholderWidth: Math.round(placeholder.width),
+                        placeholderHeight: Math.round(placeholder.height)
+                    });
+                    console.log(`${logPrefix} Compositing complete: ${imageBuffer.length} bytes`);
+                } else {
+                    console.warn(`${logPrefix} WARNING: No placeholder found - skipping compositing`);
+                }
+            } else {
+                console.log(`${logPrefix} INFO: No image in newsItem - skipping compositing`);
+            }
 
             // 2. Publish
+            console.log(`${logPrefix} Publishing to Facebook...`);
             const result = await publishToFacebook({
                 pageId: socialAccount.pageId,
                 accessToken: socialAccount.accessToken,
@@ -75,17 +108,20 @@ export async function processScheduledPosts() {
                 data: { status: 'POSTED' }
             })
 
+            console.log(`${logPrefix} SUCCESS: Post ${post.id} published`);
             results.push({ id: post.id, status: 'SUCCESS', platformId: result.id })
 
         } catch (e: any) {
-            console.error(`[Scheduler] Failed post ${post.id}:`, e)
+            const errorMessage = e.message || 'Unknown error';
+            console.error(`${logPrefix} ERROR: Post ${post.id} failed - ${errorMessage}`);
+            console.error(`${logPrefix} Stack: ${e.stack?.split('\n').slice(0, 3).join('\n') || 'N/A'}`);
 
             await db.post.update({
                 where: { id: post.id },
                 data: { status: 'FAILED' } // Store error message if we had a field?
             })
 
-            results.push({ id: post.id, status: 'FAILED', error: e.message })
+            results.push({ id: post.id, status: 'FAILED', error: errorMessage })
         }
     }
 

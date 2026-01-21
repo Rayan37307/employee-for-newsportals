@@ -14,26 +14,49 @@ interface ImageResult {
     error?: string;
 }
 
-/**
- * Fetch an image from a URL or decode base64 data URL
- * @param imageUrl - External URL or base64 data URL
- * @param timeout - Fetch timeout in milliseconds (default: 10s)
- * @returns Buffer of the image or null if failed
- */
 async function fetchImage(imageUrl: string, timeout: number = 10000): Promise<Buffer | null> {
+    const logPrefix = '[ImageProcessor][Fetch]';
+
+    if (!imageUrl) {
+        console.warn(`${logPrefix} WARNING: imageUrl is empty/null - returning null`);
+        return null;
+    }
+
+    const isDataUrl = imageUrl.startsWith('data:image');
+    const sourceType = isDataUrl ? 'dataurl' : 'url';
+    const truncatedUrl = isDataUrl ? `${imageUrl.substring(0, 50)}...` : imageUrl.substring(0, 80);
+
+    console.log(`${logPrefix} Attempting to fetch image (type=${sourceType}, url=${truncatedUrl})`);
+
     try {
-        if (imageUrl.startsWith('data:image')) {
-            // Handle data URL (base64)
-            const base64Data = imageUrl.split(',')[1];
-            if (!base64Data) {
-                throw new Error('Invalid data URL: no base64 content');
+        if (isDataUrl) {
+            const parts = imageUrl.split(',');
+            if (parts.length < 2) {
+                console.warn(`${logPrefix} WARNING: Invalid data URL format (no comma separator) - returning null`);
+                return null;
             }
-            return Buffer.from(base64Data, 'base64');
+
+            const base64Data = parts[1];
+            if (!base64Data) {
+                console.warn(`${logPrefix} WARNING: Invalid data URL (no base64 content) - returning null`);
+                return null;
+            }
+
+            try {
+                const buffer = Buffer.from(base64Data, 'base64');
+                console.log(`${logPrefix} SUCCESS: Decoded data URL (size=${buffer.length} bytes)`);
+                return buffer;
+            } catch (decodeError) {
+                const errorMessage = decodeError instanceof Error ? decodeError.message : 'Unknown decode error';
+                console.error(`${logPrefix} ERROR: Base64 decode failed - ${errorMessage} - returning null`);
+                return null;
+            }
         } else {
-            // Handle external URL with timeout
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeout);
-            
+
+            console.log(`${logPrefix} Fetching external URL (timeout=${timeout}ms)`);
+
             const response = await fetch(imageUrl, {
                 signal: controller.signal,
                 headers: {
@@ -41,52 +64,56 @@ async function fetchImage(imageUrl: string, timeout: number = 10000): Promise<Bu
                     'Accept': 'image/*',
                 }
             });
-            
+
             clearTimeout(timeoutId);
-            
+
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                console.error(`${logPrefix} ERROR: HTTP ${response.status} ${response.statusText} - returning null`);
+                return null;
             }
-            
+
             const arrayBuffer = await response.arrayBuffer();
-            return Buffer.from(arrayBuffer);
+            const buffer = Buffer.from(arrayBuffer);
+
+            console.log(`${logPrefix} SUCCESS: Downloaded external image (size=${buffer.length} bytes)`);
+            return buffer;
         }
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`[ImageProcessor] Failed to fetch image: ${errorMessage}`);
+        const errorStack = error instanceof Error ? error.stack : '';
+        console.error(`${logPrefix} ERROR: ${errorMessage} - returning null`);
+        if (errorStack) {
+            console.error(`${logPrefix} Stack: ${errorStack.split('\n').slice(0, 3).join('\n')}`);
+        }
         return null;
     }
 }
 
-/**
- * Process and composite an image onto a card template
- * @param cardBuffer - The base card PNG buffer
- * @param options - Image processing options
- * @returns The composited card buffer or original if processing fails
- */
 export async function compositeImage(
     cardBuffer: Buffer,
     options: ImageProcessingOptions
 ): Promise<Buffer> {
+    const logPrefix = '[ImageProcessor][Composite]';
     const { imageUrl, placeholderX, placeholderY, placeholderWidth, placeholderHeight } = options;
 
-    console.log(`[ImageProcessor] Processing image for placeholder at (${placeholderX}, ${placeholderY}) size ${placeholderWidth}x${placeholderHeight}`);
+    console.log(`${logPrefix} START: imageUrl=${imageUrl ? (imageUrl.startsWith('data:') ? 'dataurl' : imageUrl.substring(0, 60)) : 'null'}, position=(${placeholderX}, ${placeholderY}), size=${placeholderWidth}x${placeholderHeight}`);
+    console.log(`${logPrefix} Input card buffer: ${cardBuffer.length} bytes`);
 
-    // Fetch the image
     const imageBuffer = await fetchImage(imageUrl);
-    
+
     if (!imageBuffer) {
-        console.log(`[ImageProcessor] Using template placeholder (no image available)`);
+        console.warn(`${logPrefix} WARNING: fetchImage returned null - returning original card buffer (no image composited)`);
         return cardBuffer;
     }
 
-    try {
-        // Get image metadata
-        const metadata = await sharp(imageBuffer).metadata();
-        console.log(`[ImageProcessor] Source image: ${metadata.width}x${metadata.height}`);
+    console.log(`${logPrefix} Image buffer received: ${imageBuffer.length} bytes`);
 
-        // Process the image to fit the placeholder
-        // Use cover to maintain aspect ratio and fill the area
+    try {
+        console.log(`${logPrefix} Extracting image metadata with sharp...`);
+        const metadata = await sharp(imageBuffer).metadata();
+        console.log(`${logPrefix} Source image metadata: ${metadata.width}x${metadata.height}, format=${metadata.format || 'unknown'}`);
+
+        console.log(`${logPrefix} Resizing image to fit placeholder (${placeholderWidth}x${placeholderHeight}, fit=cover, position=center)...`);
         const processedImageBuffer = await sharp(imageBuffer)
             .resize({
                 width: placeholderWidth,
@@ -97,7 +124,9 @@ export async function compositeImage(
             .png()
             .toBuffer();
 
-        // Composite the processed image onto the card
+        console.log(`${logPrefix} Resized image buffer: ${processedImageBuffer.length} bytes`);
+
+        console.log(`${logPrefix} Compositing onto card at position (${placeholderX}, ${placeholderY})...`);
         const resultBuffer = await sharp(cardBuffer)
             .composite([{
                 input: processedImageBuffer,
@@ -108,77 +137,118 @@ export async function compositeImage(
             .png()
             .toBuffer();
 
-        console.log(`[ImageProcessor] Successfully composited image`);
+        console.log(`${logPrefix} SUCCESS: Composited image (output=${resultBuffer.length} bytes, delta=${resultBuffer.length - cardBuffer.length} bytes)`);
         return resultBuffer;
 
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`[ImageProcessor] Failed to process image: ${errorMessage}`);
-        console.log(`[ImageProcessor] Using template placeholder`);
+        const errorStack = error instanceof Error ? error.stack : '';
+        console.error(`${logPrefix} ERROR: ${errorMessage}`);
+        if (errorStack) {
+            console.error(`${logPrefix} Stack: ${errorStack.split('\n').slice(0, 5).join('\n')}`);
+        }
+        console.warn(`${logPrefix} WARNING: Returning original card buffer (sharp processing failed)`);
         return cardBuffer;
     }
 }
 
-/**
- * Check if an image is valid and processable
- * @param imageUrl - The image URL or data URL
- * @returns Object with validity status and info
- */
 export function validateImage(imageUrl: string): { valid: boolean; type: string; size?: number; error?: string } {
+    const logPrefix = '[ImageProcessor][Validate]';
+
+    if (!imageUrl) {
+        console.warn(`${logPrefix} WARNING: imageUrl is empty/null`);
+        return { valid: false, type: 'empty', error: 'imageUrl is empty or null' };
+    }
+
+    console.log(`${logPrefix} Validating: ${imageUrl.startsWith('data:') ? 'dataurl' : imageUrl.substring(0, 60)}`);
+
     try {
         if (imageUrl.startsWith('data:image')) {
             const parts = imageUrl.split(',');
             if (parts.length !== 2) {
-                return { valid: false, type: 'dataurl', error: 'Invalid data URL format' };
+                const error = 'Invalid data URL format (expected 2 parts)';
+                console.warn(`${logPrefix} INVALID: ${error}`);
+                return { valid: false, type: 'dataurl', error };
             }
+
             const base64Data = parts[1];
             const size = Buffer.byteLength(base64Data, 'base64');
-            
-            // Check max size (e.g., 10MB)
+            const sizeKB = (size / 1024).toFixed(2);
+
             const maxSize = 10 * 1024 * 1024;
             if (size > maxSize) {
-                return { valid: false, type: 'dataurl', error: `Image too large: ${(size / 1024 / 1024).toFixed(2)}MB (max: ${maxSize / 1024 / 1024}MB)` };
+                const error = `Image too large: ${(size / 1024 / 1024).toFixed(2)}MB (max: ${maxSize / 1024 / 1024}MB)`;
+                console.warn(`${logPrefix} INVALID: ${error}`);
+                return { valid: false, type: 'dataurl', size, error };
             }
-            
+
+            console.log(`${logPrefix} VALID: dataurl (size=${sizeKB}KB)`);
             return { valid: true, type: 'dataurl', size };
         } else {
-            // Basic URL validation
             try {
                 new URL(imageUrl);
+                console.log(`${logPrefix} VALID: url`);
                 return { valid: true, type: 'url' };
             } catch {
-                return { valid: false, type: 'url', error: 'Invalid URL format' };
+                const error = 'Invalid URL format';
+                console.warn(`${logPrefix} INVALID: ${error}`);
+                return { valid: false, type: 'url', error };
             }
         }
     } catch (error) {
-        return { valid: false, type: 'unknown', error: 'Validation error' };
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error(`${logPrefix} ERROR: ${errorMessage}`);
+        return { valid: false, type: 'unknown', error: errorMessage };
     }
 }
 
-/**
- * Get placeholder position from canvas objects
- * @param canvasData - Parsed canvas JSON data
- * @returns Position and size of the image placeholder, or null if not found
- */
 export function getImagePlaceholder(canvasData: any): { x: number; y: number; width: number; height: number } | null {
-    if (!canvasData.objects || !Array.isArray(canvasData.objects)) {
+    const logPrefix = '[ImageProcessor][Placeholder]';
+
+    if (!canvasData) {
+        console.warn(`${logPrefix} WARNING: canvasData is null/undefined`);
         return null;
     }
 
-    for (const obj of canvasData.objects) {
-        if (obj.dynamicField === 'image' && (obj.type === 'Rect' || obj.type === 'rect')) {
-            // Calculate actual dimensions considering scale
+    if (!canvasData.objects) {
+        console.warn(`${logPrefix} WARNING: canvasData.objects is null/undefined`);
+        return null;
+    }
+
+    if (!Array.isArray(canvasData.objects)) {
+        console.warn(`${logPrefix} WARNING: canvasData.objects is not an array (type=${typeof canvasData.objects})`);
+        return null;
+    }
+
+    const objectCount = canvasData.objects.length;
+    console.log(`${logPrefix} Scanning ${objectCount} canvas objects for image placeholder...`);
+
+    if (objectCount === 0) {
+        console.warn(`${logPrefix} WARNING: No objects in canvasData - returning null`);
+        return null;
+    }
+
+    for (let i = 0; i < canvasData.objects.length; i++) {
+        const obj = canvasData.objects[i];
+        const objType = obj.type || 'unknown';
+        const dynamicField = obj.dynamicField || 'none';
+        const hasImageField = dynamicField === 'image';
+        const isRect = objType === 'Rect' || objType === 'rect';
+
+        console.log(`${logPrefix} Object ${i}: type=${objType}, dynamicField=${dynamicField}, isImagePlaceholder=${hasImageField && isRect}`);
+
+        if (hasImageField && isRect) {
             const width = (obj.width || 100) * (obj.scaleX || 1);
             const height = (obj.height || 100) * (obj.scaleY || 1);
-            
-            return {
-                x: obj.left || 0,
-                y: obj.top || 0,
-                width: width,
-                height: height
-            };
+            const x = obj.left || 0;
+            const y = obj.top || 0;
+
+            console.log(`${logPrefix} FOUND: Image placeholder at (${x}, ${y}) size ${width}x${height}`);
+            return { x, y, width, height };
         }
     }
 
+    console.warn(`${logPrefix} WARNING: No image placeholder found (looking for dynamicField='image' + type='Rect')`);
+    console.log(`${logPrefix} Hint: Ensure template has a rectangle with dynamicField='image' property`);
     return null;
 }

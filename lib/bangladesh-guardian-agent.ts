@@ -114,8 +114,10 @@ export async function getLatestNews(): Promise<NewsItem[]> {
  * Fetch article image from the article page
  */
 export async function fetchArticleImage(articleUrl: string): Promise<Buffer | null> {
+  console.log(`[BangladeshGuardian][ImageFetch] START: ${articleUrl.substring(0, 80)}`);
+
   try {
-    console.log(`Fetching image from: ${articleUrl}`);
+    console.log(`[BangladeshGuardian][ImageFetch] Fetching article page...`);
 
     const response = await axios.get(articleUrl, {
       headers: { 
@@ -124,20 +126,30 @@ export async function fetchArticleImage(articleUrl: string): Promise<Buffer | nu
       timeout: 15000
     });
 
+    console.log(`[BangladeshGuardian][ImageFetch] Page fetched: status=${response.status}, size=${response.data.length} bytes`);
+
     const $ = load(response.data);
 
     // 1. Try meta tags (og:image, twitter:image)
     const metaImage = $('meta[property="og:image"], meta[name="twitter:image"]').attr('content');
+    console.log(`[BangladeshGuardian][ImageFetch] Meta og:image check: ${metaImage ? 'found' : 'not found'}`);
+
     if (metaImage) {
       const imageUrl = new URL(metaImage, articleUrl).href;
+      console.log(`[BangladeshGuardian][ImageFetch] Meta image URL: ${imageUrl.substring(0, 80)}`);
       const imageBuffer = await downloadImage(imageUrl);
       if (imageBuffer) {
+        console.log(`[BangladeshGuardian][ImageFetch] SUCCESS: Downloaded from meta tag (${imageBuffer.length} bytes)`);
         return imageBuffer;
+      } else {
+        console.warn(`[BangladeshGuardian][ImageFetch] WARNING: Meta image download failed`);
       }
     }
 
     // 2. Try JSON-LD
     const jsonLdScripts = $('script[type="application/ld+json"]');
+    console.log(`[BangladeshGuardian][ImageFetch] JSON-LD scripts found: ${jsonLdScripts.length}`);
+
     for (let i = 0; i < jsonLdScripts.length; i++) {
       try {
         const jsonData = JSON.parse($(jsonLdScripts[i]).text());
@@ -148,18 +160,23 @@ export async function fetchArticleImage(articleUrl: string): Promise<Buffer | nu
             for (const item of jsonData) {
               if (item.image) {
                 imageUrl = typeof item.image === 'string' ? item.image : item.image.url;
+                console.log(`[BangladeshGuardian][ImageFetch] JSON-LD array image found: ${String(imageUrl).substring(0, 60)}`);
                 break;
               }
             }
           } else if (jsonData.image) {
             imageUrl = typeof jsonData.image === 'string' ? jsonData.image : jsonData.image.url;
+            console.log(`[BangladeshGuardian][ImageFetch] JSON-LD image found: ${String(imageUrl).substring(0, 60)}`);
           }
           
           if (imageUrl) {
             const fullImageUrl = new URL(imageUrl, articleUrl).href;
             const imageBuffer = await downloadImage(fullImageUrl);
             if (imageBuffer) {
+              console.log(`[BangladeshGuardian][ImageFetch] SUCCESS: Downloaded from JSON-LD (${imageBuffer.length} bytes)`);
               return imageBuffer;
+            } else {
+              console.warn(`[BangladeshGuardian][ImageFetch] WARNING: JSON-LD image download failed`);
             }
           }
         }
@@ -171,6 +188,8 @@ export async function fetchArticleImage(articleUrl: string): Promise<Buffer | nu
 
     // 3. Try in-article images
     const imgElements = $('img');
+    console.log(`[BangladeshGuardian][ImageFetch] <img> elements found: ${imgElements.length}`);
+
     for (let i = 0; i < imgElements.length; i++) {
       const img = $(imgElements[i]);
       const src = img.attr('src') || 
@@ -181,20 +200,29 @@ export async function fetchArticleImage(articleUrl: string): Promise<Buffer | nu
       if (!src) continue;
       
       const fullSrc = new URL(src, articleUrl).href;
+      console.log(`[BangladeshGuardian][ImageFetch] Checking img[${i}]: ${fullSrc.substring(0, 60)}`);
       
       // Skip logos and small images
-      if (isProbablyLogo(fullSrc)) continue;
+      if (isProbablyLogo(fullSrc)) {
+        console.log(`[BangladeshGuardian][ImageFetch] Skipping (probable logo): ${fullSrc.substring(0, 40)}`);
+        continue;
+      }
       
       const imageBuffer = await downloadImage(fullSrc);
       if (imageBuffer) {
+        console.log(`[BangladeshGuardian][ImageFetch] SUCCESS: Downloaded from <img> element (${imageBuffer.length} bytes)`);
         return imageBuffer;
       }
     }
 
-    console.log('No suitable image found');
+    console.warn(`[BangladeshGuardian][ImageFetch] WARNING: No suitable image found - returning null`);
     return null;
   } catch (error) {
-    console.error(`Error fetching image from ${articleUrl}:`, error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[BangladeshGuardian][ImageFetch] ERROR: ${errorMessage}`);
+    if (error instanceof Error && error.stack) {
+      console.error(`[BangladeshGuardian][ImageFetch] Stack: ${error.stack.split('\n').slice(0, 3).join('\n')}`);
+    }
     return null;
   }
 }
@@ -203,25 +231,28 @@ export async function fetchArticleImage(articleUrl: string): Promise<Buffer | nu
  * Download image from URL
  */
 async function downloadImage(url: string): Promise<Buffer | null> {
+  console.log(`[BangladeshGuardian][Download] START: ${url.substring(0, 80)}`);
+
   try {
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
       timeout: 15000
     });
     
+    console.log(`[BangladeshGuardian][Download] Response: status=${response.status}, size=${response.data.byteLength} bytes`);
+
     if (response.status === 200) {
       const buffer = Buffer.from(response.data);
-      
-      // Validate image dimensions (minimum 400x250)
-      // Note: For a full implementation, we would need to check actual dimensions
-      // For now, we'll just return the buffer
-      
+      console.log(`[BangladeshGuardian][Download] SUCCESS: ${buffer.length} bytes`);
       return buffer;
     }
     
+    console.warn(`[BangladeshGuardian][Download] WARNING: Unexpected status ${response.status} - returning null`);
     return null;
   } catch (error) {
-    console.error(`Error downloading image from ${url}:`, error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStatus = axios.isAxiosError(error) ? ` (status ${error.response?.status})` : '';
+    console.error(`[BangladeshGuardian][Download] ERROR: ${errorMessage}${errorStatus}`);
     return null;
   }
 }
