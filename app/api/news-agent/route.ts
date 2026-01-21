@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateCardImage } from '@/lib/card-generator';
+import { generateCardImage } from '@/lib/card-generator-puppeteer';
+import { compositeImage, getImagePlaceholder, validateImage } from '@/lib/image-processor';
 import prisma from '@/lib/db';
 import { getLatestNews, fetchArticleImage, sanitizeText } from '@/lib/bangladesh-guardian-agent';
 import { autopilotService } from '@/lib/autopilot-service';
@@ -112,12 +113,55 @@ export async function POST(request: NextRequest) {
           };
         }
 
-        // Generate the card image
-        const cardBuffer = await generateCardImage({
+        // Generate the card image (with text replacements)
+        console.log('[API] Generating base card with text replacements...');
+        let cardBuffer = await generateCardImage({
           template,
           mapping: mappedData,
           newsItem
         });
+        console.log(`[API] Base card generated: ${cardBuffer.length} bytes`);
+
+        // Get image URL from news item (check multiple possible fields)
+        const imageUrl = newsItem.image || newsItem.imageUrl || mappedData.image || '';
+        
+        // If we have an image URL, try to composite it onto the card
+        if (imageUrl) {
+          // Validate the image first
+          const validation = validateImage(imageUrl);
+          if (!validation.valid) {
+            console.log(`[API] Image validation failed: ${validation.error} - using template placeholder`);
+          } else {
+            console.log(`[API] Image validated (${validation.type}, ${validation.size ? (validation.size / 1024).toFixed(2) + 'KB' : 'unknown size'})`);
+            
+            // Get the template canvas data
+            const canvasData = typeof template.canvasData === 'string'
+              ? JSON.parse(template.canvasData)
+              : template.canvasData;
+            
+            // Find the image placeholder position
+            const placeholder = getImagePlaceholder(canvasData);
+            
+            if (placeholder) {
+              console.log(`[API] Compositing image onto card at (${placeholder.x}, ${placeholder.y}) size ${placeholder.width}x${placeholder.height}`);
+              
+              // Composite the image using sharp
+              cardBuffer = await compositeImage(cardBuffer, {
+                imageUrl: imageUrl,
+                placeholderX: placeholder.x,
+                placeholderY: placeholder.y,
+                placeholderWidth: Math.round(placeholder.width),
+                placeholderHeight: Math.round(placeholder.height)
+              });
+              
+              console.log(`[API] Image composition complete: ${cardBuffer.length} bytes`);
+            } else {
+              console.log('[API] No image placeholder found in template - using template placeholder');
+            }
+          }
+        } else {
+          console.log('[API] No image URL provided - using template placeholder');
+        }
 
         // Save the generated card to the database
         const newsCard = await prisma.newsCard.create({

@@ -1,5 +1,5 @@
 import { getLatestNews, fetchArticleImage } from '@/lib/bangladesh-guardian-agent';
-import { generateCardImage } from '@/lib/card-generator';
+import { generateCardImage } from '@/lib/card-generator-puppeteer';
 import prisma from '@/lib/db';
 
 class AutopilotService {

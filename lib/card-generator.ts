@@ -1,7 +1,6 @@
 
 import * as fabric from 'fabric'
 import { JSDOM } from 'jsdom'
-import { createCanvas } from 'canvas'
 
 interface GenerateCardOptions {
     template: any
@@ -13,7 +12,7 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
     try {
         // Dynamic imports to handle environments without native dependencies
         const { JSDOM } = require('jsdom')
-        const { createCanvas } = require('canvas')
+        const { createCanvas, loadImage } = require('canvas')
         const fabricModule = require('fabric')
         // Handle different export structures (CommonJS vs ESM interop)
         const fabric = fabricModule.fabric || fabricModule
@@ -24,11 +23,23 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
 
         // Shim JSDOM for Fabric if needed
         if (!global.document) {
-            const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>')
+            const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+                url: 'http://localhost',
+                pretendToBeVisual: true,
+                runScripts: 'dangerously'
+            })
             // @ts-ignore
             global.window = dom.window
             // @ts-ignore
             global.document = dom.window.document
+            // @ts-ignore
+            global.HTMLElement = dom.window.HTMLElement
+            // @ts-ignore
+            global.Element = dom.window.Element
+            // @ts-ignore
+            global.Node = dom.window.Node
+            // @ts-ignore
+            global.navigator = dom.window.navigator
         }
 
         // Create a static canvas (no interactivity needed)
@@ -44,39 +55,103 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
         // Load data
         await canvas.loadFromJSON(canvasData)
 
+        console.log('[CardGenerator] DEBUG: Canvas loaded from JSON')
+        console.log('[CardGenerator] DEBUG: canvasData keys:', Object.keys(canvasData))
+        console.log('[CardGenerator] DEBUG: canvasData.objects count:', canvasData.objects?.length || 0)
+
+        // Check if dynamicField is preserved in the raw JSON
+        if (canvasData.objects && canvasData.objects.length > 0) {
+            console.log('[CardGenerator] DEBUG: First 3 raw objects from canvasData:')
+            canvasData.objects.slice(0, 3).forEach((obj: any, idx: number) => {
+                console.log(`  Object ${idx}: type=${obj.type}, dynamicField=${obj.dynamicField}, customProperties=${Object.keys(obj).filter(k => !['type', 'version', 'originX', 'originY', 'left', 'top', 'width', 'height', 'fill', 'stroke'].includes(k))}`)
+            })
+        }
+
+        // CRITICAL FIX: Fabric.js doesn't preserve custom properties during JSON serialization
+        // We must manually restore dynamicField from the original JSON data
+        if (canvasData.objects && Array.isArray(canvasData.objects)) {
+            const loadedObjects = canvas.getObjects()
+            console.log('[CardGenerator] DEBUG: Restoring dynamicField properties to', loadedObjects.length, 'objects')
+            loadedObjects.forEach((obj, index) => {
+                if (canvasData.objects[index]) {
+                    if (canvasData.objects[index].dynamicField !== undefined) {
+                        (obj as any).dynamicField = canvasData.objects[index].dynamicField
+                        console.log(`[CardGenerator] DEBUG: Restored dynamicField="${canvasData.objects[index].dynamicField}" to object ${index} (type=${obj.type})`)
+                    }
+                    if (canvasData.objects[index].fallbackValue !== undefined) {
+                        (obj as any).fallbackValue = canvasData.objects[index].fallbackValue
+                    }
+                }
+            })
+        }
+
         // Apply Mappings based on dynamic field assignments
         const objects = canvas.getObjects()
+        console.log('[CardGenerator] DEBUG: Total objects loaded from canvas:', objects.length)
+
         for (const obj of objects) {
             const dynamicField = (obj as any).dynamicField || 'none'
+            console.log(`[CardGenerator] DEBUG: Object type=${obj.type}, dynamicField="${dynamicField}", has dynamicField prop=${(obj as any).hasOwnProperty('dynamicField')}`)
 
             if (dynamicField && dynamicField !== 'none' && newsItem && newsItem[dynamicField]) {
                 const newValue = String(newsItem[dynamicField])
+                console.log(`[CardGenerator] DEBUG: Found dynamicField="${dynamicField}", newValue=${newValue.substring(0, 100)}${newValue.length > 100 ? '...' : ''}`)
 
                 // Handle text objects
-                if (obj.type && (obj.type.toLowerCase().includes('text') || obj.type === 'i-text')) {
+                const objType = obj.type?.toLowerCase();
+                if (objType && (objType.includes('text') || objType === 'itext' || objType === 'text')) {
+                    console.log('[CardGenerator] DEBUG: Handling as text object')
                     (obj as fabric.Text).set('text', newValue)
                 }
                 // Handle image placeholders (rectangles with image dynamic field)
-                else if (obj.type === 'rect' && dynamicField === 'image' && newValue) {
-                    // For server-side rendering, we need to download the image and replace the rectangle
-                    // Since we're in a Node.js environment, we'll need to handle this differently
+                else if ((obj.type === 'rect' || obj.type === 'Rect') && dynamicField === 'image' && newValue) {
+                    console.log('[CardGenerator] DEBUG: Handling as image placeholder (rect with image dynamicField)')
                     try {
-                        // In a real implementation, we would download the image from newValue (URL)
-                        // and then create a fabric.Image object to replace the rectangle
-                        // For now, we'll just change the rectangle's appearance to indicate it's an image placeholder
-                        // In a complete implementation, we would download the image and replace the rectangle with an image object
+                        // Handle data URLs (base64) from autopilot service
+                        let imageDataUrl = newValue;
+
+                        if (newValue.startsWith('data:image')) {
+                            // Already a data URL, use it directly
+                            imageDataUrl = newValue;
+                        } else {
+                            // It's a URL, fetch it and convert to data URL
+                            const response = await fetch(newValue);
+                            if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+                            const arrayBuffer = await response.arrayBuffer();
+                            const buffer = Buffer.from(arrayBuffer);
+                            const mimeType = response.headers.get('content-type') || 'image/jpeg';
+                            imageDataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`;
+                        }
+
+                        // Create an Image from the data URL using node-canvas
+                        const img = await loadImage(imageDataUrl);
+
+                        // Scale image to fit the rectangle while maintaining aspect ratio
+                        const scaleX = obj.width ? obj.width / img.width : 1;
+                        const scaleY = obj.height ? obj.height / img.height : 1;
+                        const scale = Math.min(scaleX, scaleY);
+
+                        // Create fabric Image from the node-canvas image
+                        const fabricImage = new fabric.FabricImage(img, {
+                            left: obj.left,
+                            top: obj.top,
+                            scaleX: scale,
+                            scaleY: scale,
+                            originX: 'left',
+                            originY: 'top',
+                        });
+
+                        // Replace the rectangle with the image
+                        canvas.remove(obj);
+                        canvas.add(fabricImage);
+                    } catch (error) {
+                        console.error('[CardGenerator] ERROR replacing image placeholder:', error);
+                        // Fallback: just change the placeholder appearance
                         (obj as fabric.Rect).set({
                             fill: '#f0f0f0',
                             stroke: '#ccc',
                             strokeWidth: 1
                         });
-
-                        // If newValue is a data URL (which it likely is from the news agent service),
-                        // we could potentially create an image object, but for simplicity in this implementation
-                        // we'll just note that this is where image replacement would happen
-                        console.log(`Image placeholder for: ${newValue.substring(0, 50)}...`);
-                    } catch (error) {
-                        console.error('Error handling image placeholder:', error)
                     }
                 }
             }
