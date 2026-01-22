@@ -17,7 +17,9 @@ import {
     Upload,
     Trash2,
     Save,
-    Layers
+    Layers,
+    ArrowDown,
+    ArrowUp
 } from 'lucide-react'
 import { useFonts, Font } from '@/hooks/use-fonts'
 
@@ -40,6 +42,10 @@ function CanvasEditorContent() {
         exportToImage,
         exportToJSON,
         loadFromJSON,
+        sendToBack,
+        sendBackward,
+        bringForward,
+        bringToFront,
     } = useCanvas()
 
     const [showSaveModal, setShowSaveModal] = useState(false)
@@ -316,6 +322,19 @@ function CanvasEditorContent() {
                                 clearCanvas()
                             }
                         }}
+                    />
+
+                    <div className="h-px w-12 bg-border my-2" />
+
+                    <ToolButton
+                        icon={<ArrowDown className="w-5 h-5" />}
+                        label="Back"
+                        onClick={() => sendBackward()}
+                    />
+                    <ToolButton
+                        icon={<ArrowUp className="w-5 h-5" />}
+                        label="Forward"
+                        onClick={() => bringForward()}
                     />
                 </div>
 

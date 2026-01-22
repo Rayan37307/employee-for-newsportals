@@ -353,6 +353,42 @@ export function useCanvas() {
         canvas.renderAll()
     }
 
+    const sendToBack = () => {
+        if (!canvas) return
+        const activeObject = canvas.getActiveObject()
+        if (activeObject) {
+            ;(canvas as any).sendToBack(activeObject)
+            canvas.renderAll()
+        }
+    }
+
+    const sendBackward = () => {
+        if (!canvas) return
+        const activeObject = canvas.getActiveObject()
+        if (activeObject) {
+            ;(canvas as any).sendBackwards(activeObject)
+            canvas.renderAll()
+        }
+    }
+
+    const bringForward = () => {
+        if (!canvas) return
+        const activeObject = canvas.getActiveObject()
+        if (activeObject) {
+            ;(canvas as any).bringForward(activeObject)
+            canvas.renderAll()
+        }
+    }
+
+    const bringToFront = () => {
+        if (!canvas) return
+        const activeObject = canvas.getActiveObject()
+        if (activeObject) {
+            ;(canvas as any).bringToFront(activeObject)
+            canvas.renderAll()
+        }
+    }
+
     return {
         canvas,
         setCanvas,
@@ -366,5 +402,9 @@ export function useCanvas() {
         exportToImage,
         loadFromJSON,
         updateWithDynamicData,
+        sendToBack,
+        sendBackward,
+        bringForward,
+        bringToFront,
     }
 }
