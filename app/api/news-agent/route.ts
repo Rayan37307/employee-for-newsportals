@@ -92,9 +92,10 @@ export async function POST(request: NextRequest) {
 
           let mappedData: Record<string, any> = {};
 
-          if (mapping) {
+          if (mapping && mapping.sourceFields) {
             // Use the mapping to transform the news item
-            for (const [templateField, sourceField] of Object.entries(mapping.sourceFields)) {
+            const sourceFields = mapping.sourceFields as Record<string, string>
+            for (const [templateField, sourceField] of Object.entries(sourceFields)) {
               if (sourceField && newsItem[sourceField as keyof typeof newsItem]) {
                 mappedData[templateField] = newsItem[sourceField as keyof typeof newsItem];
               } else {

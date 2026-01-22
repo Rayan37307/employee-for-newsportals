@@ -7,6 +7,7 @@ import { compositeImage, getImagePlaceholder } from '@/lib/image-processor';
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id: sourceId } = await params;
+    const logPrefix = `[SourceFetch/${sourceId}]`;
 
     if (!sourceId) {
       return NextResponse.json({ error: 'Source ID is required' }, { status: 400 });
@@ -25,8 +26,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const { UniversalNewsAgent } = await import('@/lib/universal-news-agent');
 
     // Create agent with source config
+    const config = (source.config || {}) as { url?: string; endpoint?: string }
     const agent = new UniversalNewsAgent({
-      url: source.config.url || source.config.endpoint,
+      url: config.url || config.endpoint || '',
       maxConcurrency: 3,
       cacheTimeout: 3600000,
       userAgent: 'News-Agent/1.0'
@@ -119,8 +121,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { UniversalNewsAgent } = await import('@/lib/universal-news-agent');
 
     // Create agent with source config
+    const config = (source.config || {}) as { url?: string; endpoint?: string }
     const agent = new UniversalNewsAgent({
-      url: source.config.url || source.config.endpoint,
+      url: config.url || config.endpoint || '',
       maxConcurrency: 3,
       cacheTimeout: 3600000,
       userAgent: 'News-Agent/1.0'
@@ -173,7 +176,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         const template = await prisma.template.findFirst({
           where: {
             OR: [
-              { category: { contains: 'NEWS', mode: 'insensitive' } },
+              { category: { in: ['BREAKING_NEWS', 'CUSTOM'] } },
               { name: { contains: 'news', mode: 'insensitive' } },
               { name: { contains: 'card', mode: 'insensitive' } }
             ]
@@ -192,9 +195,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           // Prepare the data for the template based on the mapping
           let mappedData: Record<string, any> = {};
           
-          if (mapping) {
+          if (mapping && mapping.sourceFields) {
             // Use the mapping to transform the news item
-            for (const [templateField, sourceField] of Object.entries(mapping.sourceFields)) {
+            const sourceFields = mapping.sourceFields as Record<string, string>
+            for (const [templateField, sourceField] of Object.entries(sourceFields)) {
               if (sourceField && item[sourceField as keyof typeof item]) {
                 mappedData[templateField] = item[sourceField as keyof typeof item];
               } else {
@@ -220,7 +224,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             };
           }
 
-            try {
+          try {
             const logPrefix = '[Sources][Fetch][Image]';
             console.log(`${logPrefix} Processing card for: ${item.title?.substring(0, 30) || 'unknown'}`);
 
@@ -279,7 +283,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             console.log(`${logPrefix} SUCCESS: Card generated (id=${mapping?.id || 'none'}, processed=${processedCount})`);
           } catch (genError) {
             const errorMessage = genError instanceof Error ? genError.message : 'Unknown error';
-            console.error(`${logPrefix} ERROR: ${errorMessage}`);
+            console.error(`[Sources][Fetch] ERROR: ${errorMessage}`);
           }
         }
       }

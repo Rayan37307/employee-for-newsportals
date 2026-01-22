@@ -34,7 +34,7 @@ class AutopilotService {
             const template = await prisma.template.findFirst({
               where: {
                 OR: [
-                  { category: { contains: 'NEWS', mode: 'insensitive' } },
+                  { category: { in: ['BREAKING_NEWS', 'CUSTOM'] } },
                   { name: { contains: 'news', mode: 'insensitive' } },
                   { name: { contains: 'card', mode: 'insensitive' } }
                 ]
@@ -67,9 +67,10 @@ class AutopilotService {
               // Prepare the data for the template based on the mapping
               let mappedData: Record<string, any> = {};
 
-              if (mapping) {
+              if (mapping && mapping.sourceFields) {
                 // Use the mapping to transform the news item
-                for (const [templateField, sourceField] of Object.entries(mapping.sourceFields)) {
+                const sourceFields = mapping.sourceFields as Record<string, string>
+                for (const [templateField, sourceField] of Object.entries(sourceFields)) {
                   if (sourceField && newsItem[sourceField as keyof typeof newsItem]) {
                     mappedData[templateField] = newsItem[sourceField as keyof typeof newsItem];
                   } else {

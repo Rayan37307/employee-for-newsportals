@@ -6,6 +6,28 @@ interface GenerateCardOptions {
     newsItem: any;
 }
 
+declare global {
+    interface Window {
+        canvasResult: string | null;
+    }
+}
+
+async function getCustomFonts(): Promise<{ name: string; family: string; fileUrl: string }[]> {
+    try {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        const response = await fetch(`${baseUrl}/api/fonts`);
+        if (!response.ok) return [];
+        const fonts = await response.json();
+        return fonts.map((font: any) => ({
+            ...font,
+            fileUrl: `${baseUrl}${font.fileUrl}`,
+        }));
+    } catch (error) {
+        console.error('Error fetching custom fonts:', error);
+        return [];
+    }
+}
+
 /**
  * Generate a card image with text replacements only.
  * Image compositing is handled separately by the sharp-based image processor.
@@ -18,14 +40,27 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
     const width = canvasData.width || 1200;
     const height = canvasData.height || 630;
 
-    // Serialize newsItem for embedding in JavaScript
+    const customFonts = await getCustomFonts();
+    
+    const fontFaceCSS = customFonts.map(font => {
+        return `@font-face {
+            font-family: '${font.family}';
+            src: url('${font.fileUrl}') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }`;
+    }).join('\n');
+
     const newsItemJson = JSON.stringify(newsItem);
+    
+    const fontFamilies = JSON.stringify(customFonts.map(f => f.family));
     
     const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
     <style>
+        ${fontFaceCSS}
         body { margin: 0; padding: 0; }
         canvas { max-width: 100%; height: auto; }
     </style>
@@ -34,6 +69,7 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
     <canvas id="canvas"></canvas>
     <script>
         const newsItem = ${newsItemJson};
+        const customFontFamilies = ${fontFamilies};
         
         window.canvasResult = null;
         
@@ -47,8 +83,6 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
         canvas.loadFromJSON(${JSON.stringify(canvasData)}, function() {
             console.log('Canvas loaded, objects:', canvas.getObjects().length);
             
-            // Apply dynamic field mappings for TEXT ONLY
-            // Images are handled server-side by sharp for better reliability
             canvas.getObjects().forEach(function(obj, idx) {
                 const dynamicField = obj.dynamicField;
                 if (dynamicField && dynamicField !== 'none' && dynamicField !== 'image') {
@@ -58,12 +92,15 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
                         console.log('Updated text: ' + dynamicField + ' = ' + String(newValue).substring(0, 50));
                     }
                 }
+                
+                if (obj.fontFamily && customFontFamilies.includes(obj.fontFamily)) {
+                    console.log('Using custom font:', obj.fontFamily);
+                }
             });
             
             canvas.renderAll();
             console.log('Canvas rendered');
             
-            // Generate the data URL
             try {
                 const dataUrl = canvas.toDataURL({
                     format: 'png',

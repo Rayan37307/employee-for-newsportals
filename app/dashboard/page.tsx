@@ -44,10 +44,12 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false)
   const [articles, setArticles] = useState<Article[]>([])
   const [postedLinks, setPostedLinks] = useState<PostedLink[]>([])
+  const [templatesCount, setTemplatesCount] = useState(0)
   const [lastChecked, setLastChecked] = useState<Date | null>(null)
 
   useEffect(() => {
     fetchPostedLinks()
+    fetchTemplates()
   }, [])
 
   const fetchPostedLinks = async () => {
@@ -59,6 +61,18 @@ export default function DashboardPage() {
       }
     } catch (error) {
       console.error('Error fetching posted links:', error)
+    }
+  }
+
+  const fetchTemplates = async () => {
+    try {
+      const response = await fetch('/api/templates')
+      const data = await response.json()
+      if (Array.isArray(data)) {
+        setTemplatesCount(data.length)
+      }
+    } catch (error) {
+      console.error('Error fetching templates:', error)
     }
   }
 
@@ -170,7 +184,7 @@ export default function DashboardPage() {
             />
             <StatCard
               title="Templates"
-              value="0"
+              value={templatesCount.toString()}
               subtitle="Available for cards"
               gradient="from-purple-500 to-pink-500"
               icon={<Palette className="w-6 h-6" />}

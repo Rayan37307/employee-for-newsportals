@@ -19,6 +19,7 @@ import {
     Save,
     Layers
 } from 'lucide-react'
+import { useFonts, Font } from '@/hooks/use-fonts'
 
 function CanvasEditorContent() {
     const searchParams = useSearchParams()
@@ -51,6 +52,7 @@ function CanvasEditorContent() {
     const [canvasHeight, setCanvasHeight] = useState(urlHeight)
     const [initialData, setInitialData] = useState<any>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const { fonts, fetchFonts, uploadFont } = useFonts()
 
     // Load template if templateId is provided
     useEffect(() => {
@@ -98,6 +100,32 @@ function CanvasEditorContent() {
 
         loadTemplate()
     }, [templateId])
+
+    useEffect(() => {
+        fetchFonts()
+    }, [fetchFonts])
+
+    const handleFontUpload = async (file: File, name: string) => {
+        if (!file || !name) return
+
+        if (!file.name.endsWith('.ttf')) {
+            alert('Please select a .ttf font file')
+            return
+        }
+
+        if (file.size > 10 * 1024 * 1024) {
+            alert('Font file size must be less than 10MB')
+            return
+        }
+
+        try {
+            await uploadFont(file, name)
+            await fetchFonts()
+        } catch (error) {
+            console.error('Error uploading font:', error)
+            alert('Failed to upload font')
+        }
+    }
 
     const handleExportImage = () => {
         const dataUrl = exportToImage()
@@ -331,13 +359,14 @@ function CanvasEditorContent() {
                             width={canvasWidth}
                             height={canvasHeight}
                             initialData={initialData}
+                            customFonts={fonts}
                             onCanvasReady={setCanvas}
                         />
                     </div>
                 </div>
 
                 {/* Right Properties Panel */}
-                <PropertiesPanel canvas={canvas} />
+                <PropertiesPanel canvas={canvas} customFonts={fonts} onFontUpload={handleFontUpload} />
             </div>
 
             {/* Save Template Modal */}

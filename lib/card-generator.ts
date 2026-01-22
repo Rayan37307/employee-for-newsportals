@@ -72,7 +72,7 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
         if (canvasData.objects && Array.isArray(canvasData.objects)) {
             const loadedObjects = canvas.getObjects()
             console.log('[CardGenerator] DEBUG: Restoring dynamicField properties to', loadedObjects.length, 'objects')
-            loadedObjects.forEach((obj, index) => {
+            loadedObjects.forEach((obj: fabric.FabricObject, index: number) => {
                 if (canvasData.objects[index]) {
                     if (canvasData.objects[index].dynamicField !== undefined) {
                         (obj as any).dynamicField = canvasData.objects[index].dynamicField
@@ -101,7 +101,7 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
                 const objType = obj.type?.toLowerCase();
                 if (objType && (objType.includes('text') || objType === 'itext' || objType === 'text')) {
                     console.log('[CardGenerator] DEBUG: Handling as text object')
-                    (obj as fabric.Text).set('text', newValue)
+                    ;(obj as fabric.Text).set('text', newValue) as any
                 }
                 // Handle image placeholders (rectangles with image dynamic field)
                 else if ((obj.type === 'rect' || obj.type === 'Rect') && dynamicField === 'image' && newValue) {

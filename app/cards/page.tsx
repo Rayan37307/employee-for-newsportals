@@ -24,6 +24,7 @@ import {
   AlertCircle
 } from 'lucide-react'
 import html2canvas from 'html2canvas'
+import { useFonts, Font } from '@/hooks/use-fonts'
 
 interface Article {
   id: string
@@ -94,6 +95,20 @@ function getCanvasDimensions(canvasData: any): { width: number; height: number }
   return { width: 800, height: 420 }
 }
 
+function getFontFaceStyles(fonts: Font[]): string {
+  if (fonts.length === 0) return ''
+  
+  return fonts.map(font => `
+    @font-face {
+      font-family: '${font.family}';
+      src: url('${font.fileUrl}') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+  `).join('\n')
+}
+
 export default function CardsPage() {
   const [articles, setArticles] = useState<Article[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
@@ -108,11 +123,13 @@ export default function CardsPage() {
   const [error, setError] = useState<string | null>(null)
   const cardPreviewRef = useRef<HTMLDivElement>(null)
   const captureContainerRef = useRef<HTMLDivElement>(null)
+  const { fonts, fetchFonts } = useFonts()
 
   useEffect(() => {
     fetchArticles()
     fetchTemplates()
     fetchCards()
+    fetchFonts()
   }, [])
 
   // Clear previewArticle when selected article changes
@@ -370,7 +387,6 @@ export default function CardsPage() {
 
   const renderCardPreview = () => {
     const template = templates.find(t => t.id === selectedTemplate)
-    // Use previewArticle if available (from fetchFullArticleData), otherwise fall back to selected article
     const article = previewArticle || articles.find(a => a.id === selectedArticle)
     
     if (!template || !article) return null
@@ -382,18 +398,22 @@ export default function CardsPage() {
     const { width, height } = getCanvasDimensions(canvasData)
     const objects = canvasData.objects || []
 
+    const fontFaceStyles = getFontFaceStyles(fonts)
+
     return (
-      <div 
-        ref={cardPreviewRef}
-        style={{
-          width: `${width}px`,
-          height: `${height}px`,
-          position: 'relative',
-          backgroundColor: canvasData.backgroundColor || '#ffffff',
-          overflow: 'hidden',
-          border: '1px solid #e0e0e0',
-        }}
-      >
+      <>
+        <style>{fontFaceStyles}</style>
+        <div 
+          ref={cardPreviewRef}
+          style={{
+            width: `${width}px`,
+            height: `${height}px`,
+            position: 'relative',
+            backgroundColor: canvasData.backgroundColor || '#ffffff',
+            overflow: 'hidden',
+            border: '1px solid #e0e0e0',
+          }}
+        >
         {objects.map((obj: any, index: number) => {
           const type = (obj.type || '').toLowerCase()
           const dynamicField = obj.dynamicField || 'none'
@@ -548,6 +568,7 @@ export default function CardsPage() {
           return null
         })}
       </div>
+      </>
     )
   }
 

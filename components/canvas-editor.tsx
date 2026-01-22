@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import * as fabric from 'fabric'
+import { Font } from '@/hooks/use-fonts'
 
 export type DynamicField = 'title' | 'date' | 'description' | 'category' | 'author' | 'image' | 'none';
 
@@ -15,6 +16,7 @@ interface CanvasEditorProps {
     height?: number
     readOnly?: boolean
     initialData?: any
+    customFonts?: Font[]
     onCanvasReady?: (canvas: fabric.Canvas) => void
 }
 
@@ -23,6 +25,7 @@ export function CanvasEditor({
     height = 630,
     readOnly = false,
     initialData,
+    customFonts = [],
     onCanvasReady
 }: CanvasEditorProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -30,9 +33,38 @@ export function CanvasEditor({
     const [isReady, setIsReady] = useState(false)
     const isMounted = useRef(true)
     const containerRef = useRef<HTMLDivElement>(null)
+    const fontsLoadedRef = useRef<Set<string>>(new Set())
+
+    const registerCustomFonts = useCallback(async () => {
+        if (!customFonts || customFonts.length === 0) return
+        
+        for (const font of customFonts) {
+            if (fontsLoadedRef.current.has(font.family)) continue
+            
+            try {
+                const fontFace = new FontFace(font.family, `url(${font.fileUrl})`)
+                await fontFace.load()
+                document.fonts.add(fontFace)
+                fontsLoadedRef.current.add(font.family)
+                console.log(`Registered custom font: ${font.name} (${font.family})`)
+            } catch (error) {
+                console.error(`Failed to register font ${font.name}:`, error)
+            }
+        }
+    }, [customFonts])
 
     const initCanvas = async () => {
         if (!canvasRef.current) return
+
+        // Wait for canvas element to have dimensions
+        if (canvasRef.current.width === 0 || canvasRef.current.height === 0) {
+            console.warn('Canvas element has no dimensions, waiting...')
+            await new Promise(resolve => setTimeout(resolve, 100))
+            if (!canvasRef.current || canvasRef.current.width === 0 || canvasRef.current.height === 0) {
+                console.warn('Canvas element still has no dimensions after waiting')
+                return
+            }
+        }
 
         if (fabricCanvasRef.current) {
             try {
@@ -51,51 +83,60 @@ export function CanvasEditor({
             if (initialData.height) canvasHeight = initialData.height
         }
 
-        const canvas = new fabric.Canvas(canvasRef.current, {
-            width: canvasWidth,
-            height: canvasHeight,
-            backgroundColor: '#ffffff',
-            selection: !readOnly,
-            preserveObjectStacking: true,
-            interactive: !readOnly,
-            skipTargetFind: readOnly,
-        })
+        try {
+            const canvas = new fabric.Canvas(canvasRef.current, {
+                width: canvasWidth,
+                height: canvasHeight,
+                backgroundColor: '#ffffff',
+                selection: !readOnly,
+                preserveObjectStacking: true,
+                interactive: !readOnly,
+                skipTargetFind: readOnly,
+            })
 
-        fabricCanvasRef.current = canvas
+            fabricCanvasRef.current = canvas
 
-        if (initialData) {
-            try {
-                await canvas.loadFromJSON(initialData)
-                // Restore custom properties after loading
-                if (initialData.objects && Array.isArray(initialData.objects)) {
-                    canvas.getObjects().forEach((obj, index) => {
-                        if (initialData.objects[index]) {
-                            if (initialData.objects[index].dynamicField !== undefined) {
-                                (obj as any).dynamicField = initialData.objects[index].dynamicField
+            if (initialData) {
+                try {
+                    await canvas.loadFromJSON(initialData)
+                    // Restore custom properties after loading
+                    if (initialData.objects && Array.isArray(initialData.objects)) {
+                        canvas.getObjects().forEach((obj, index) => {
+                            if (initialData.objects[index]) {
+                                if (initialData.objects[index].dynamicField !== undefined) {
+                                    (obj as any).dynamicField = initialData.objects[index].dynamicField
+                                }
+                                if (initialData.objects[index].fallbackValue !== undefined) {
+                                    (obj as any).fallbackValue = initialData.objects[index].fallbackValue
+                                }
                             }
-                            if (initialData.objects[index].fallbackValue !== undefined) {
-                                (obj as any).fallbackValue = initialData.objects[index].fallbackValue
-                            }
-                        }
-                    })
+                        })
+                    }
+                } catch (e) {
+                    console.error('Error loading initial data:', e)
                 }
-            } catch (e) {
-                console.error('Error loading initial data:', e)
             }
-        }
 
-        canvas.renderAll()
-        setIsReady(true)
+            canvas.renderAll()
+            setIsReady(true)
 
-        if (onCanvasReady && isMounted.current) {
-            onCanvasReady(canvas)
+            if (onCanvasReady && isMounted.current) {
+                onCanvasReady(canvas)
+            }
+        } catch (e) {
+            console.error('Error initializing canvas:', e)
         }
     }
 
     useEffect(() => {
         isMounted.current = true
+        registerCustomFonts()
         return () => { isMounted.current = false }
     }, [])
+
+    useEffect(() => {
+        registerCustomFonts()
+    }, [customFonts, registerCustomFonts])
 
     useEffect(() => {
         initCanvas()

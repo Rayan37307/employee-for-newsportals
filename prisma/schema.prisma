@@ -205,6 +205,19 @@ model Notification {
   @@map("notifications")
 }
 
+model Font {
+  id        String   @id @default(cuid())
+  name      String
+  family    String   @unique
+  filename  String
+  fileUrl   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("fonts")
+}
+
 model PostedLink {
   id        String   @id @default(cuid())
   url       String   @unique

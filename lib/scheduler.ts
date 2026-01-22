@@ -37,10 +37,8 @@ export async function processScheduledPosts() {
             }
 
             // 1. Regenerate Image (ensure fresh data/mapping)
-            // @ts-ignore
-            const newsItem = newsCard.sourceData
-            // @ts-ignore
-            const mapping = newsCard.dataMapping?.sourceFields
+            const newsItem = newsCard.sourceData as { image?: string; title?: string; description?: string; date?: string; author?: string; category?: string } || {}
+            const mapping = (newsCard.dataMapping?.sourceFields as Record<string, string>) || {}
 
             if (!newsItem || !newsCard.template || !mapping) {
                 throw new Error('Missing source data or template')
