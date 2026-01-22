@@ -281,6 +281,57 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
                     </div>
                 )}
 
+                {/* Layer Controls */}
+                <div>
+                    <label className="text-sm font-medium mb-2 block">Layer Order</label>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            onClick={() => {
+                                if (canvas && selectedObject) {
+                                    (canvas as any).sendToBack(selectedObject)
+                                    canvas.renderAll()
+                                }
+                            }}
+                            className="px-3 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors text-sm flex items-center justify-center gap-1"
+                        >
+                            <span>To Back</span>
+                        </button>
+                        <button
+                            onClick={() => {
+                                if (canvas && selectedObject) {
+                                    (canvas as any).sendBackwards(selectedObject)
+                                    canvas.renderAll()
+                                }
+                            }}
+                            className="px-3 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors text-sm flex items-center justify-center gap-1"
+                        >
+                            <span>Backward</span>
+                        </button>
+                        <button
+                            onClick={() => {
+                                if (canvas && selectedObject) {
+                                    (canvas as any).bringForward(selectedObject)
+                                    canvas.renderAll()
+                                }
+                            }}
+                            className="px-3 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors text-sm flex items-center justify-center gap-1"
+                        >
+                            <span>Forward</span>
+                        </button>
+                        <button
+                            onClick={() => {
+                                if (canvas && selectedObject) {
+                                    (canvas as any).bringToFront(selectedObject)
+                                    canvas.renderAll()
+                                }
+                            }}
+                            className="px-3 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors text-sm flex items-center justify-center gap-1"
+                        >
+                            <span>To Front</span>
+                        </button>
+                    </div>
+                </div>
+
                 {/* Position */}
                 <div>
                     <label className="text-sm font-medium mb-2 block">Position</label>
