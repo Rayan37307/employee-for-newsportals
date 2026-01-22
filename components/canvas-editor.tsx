@@ -357,7 +357,7 @@ export function useCanvas() {
         if (!canvas) return
         const activeObject = canvas.getActiveObject()
         if (activeObject) {
-            ;(canvas as any).sendToBack(activeObject)
+            ;(canvas as any).sendObjectToBack(activeObject)
             canvas.renderAll()
         }
     }
@@ -366,7 +366,7 @@ export function useCanvas() {
         if (!canvas) return
         const activeObject = canvas.getActiveObject()
         if (activeObject) {
-            ;(canvas as any).sendBackwards(activeObject)
+            ;(canvas as any).sendObjectBackwards(activeObject)
             canvas.renderAll()
         }
     }
@@ -375,7 +375,7 @@ export function useCanvas() {
         if (!canvas) return
         const activeObject = canvas.getActiveObject()
         if (activeObject) {
-            ;(canvas as any).bringForward(activeObject)
+            ;(canvas as any).bringObjectForward(activeObject)
             canvas.renderAll()
         }
     }
@@ -384,7 +384,7 @@ export function useCanvas() {
         if (!canvas) return
         const activeObject = canvas.getActiveObject()
         if (activeObject) {
-            ;(canvas as any).bringToFront(activeObject)
+            ;(canvas as any).bringObjectToFront(activeObject)
             canvas.renderAll()
         }
     }

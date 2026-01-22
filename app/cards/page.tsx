@@ -466,7 +466,6 @@ export default function CardsPage() {
                   left: left,
                   top: top,
                   width: objWidth,
-                  minHeight: objHeight,
                   fontSize: `${fontSizeScaled}px`,
                   color: obj.fill || '#000000',
                   fontFamily: obj.fontFamily || 'Arial, sans-serif',
@@ -474,7 +473,7 @@ export default function CardsPage() {
                   fontStyle: obj.fontStyle || 'normal',
                   lineHeight: lineHeight,
                   whiteSpace: 'pre-wrap',
-                  overflow: 'hidden',
+                  wordBreak: 'break-word',
                   textAlign: obj.textAlign || 'left',
                   textDecoration: obj.underline ? 'underline' : 
                                  obj.linethrough ? 'line-through' : 'none',

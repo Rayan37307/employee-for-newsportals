@@ -288,7 +288,7 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
                         <button
                             onClick={() => {
                                 if (canvas && selectedObject) {
-                                    (canvas as any).sendToBack(selectedObject)
+                                    ;(canvas as any).sendObjectToBack(selectedObject)
                                     canvas.renderAll()
                                 }
                             }}
@@ -299,7 +299,7 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
                         <button
                             onClick={() => {
                                 if (canvas && selectedObject) {
-                                    (canvas as any).sendBackwards(selectedObject)
+                                    ;(canvas as any).sendObjectBackwards(selectedObject)
                                     canvas.renderAll()
                                 }
                             }}
@@ -310,7 +310,7 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
                         <button
                             onClick={() => {
                                 if (canvas && selectedObject) {
-                                    (canvas as any).bringForward(selectedObject)
+                                    ;(canvas as any).bringObjectForward(selectedObject)
                                     canvas.renderAll()
                                 }
                             }}
@@ -321,7 +321,7 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
                         <button
                             onClick={() => {
                                 if (canvas && selectedObject) {
-                                    (canvas as any).bringToFront(selectedObject)
+                                    ;(canvas as any).bringObjectToFront(selectedObject)
                                     canvas.renderAll()
                                 }
                             }}

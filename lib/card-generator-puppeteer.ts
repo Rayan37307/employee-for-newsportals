@@ -88,7 +88,10 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
                 if (dynamicField && dynamicField !== 'none' && dynamicField !== 'image') {
                     const newValue = newsItem[dynamicField];
                     if (newValue && (obj.type === 'i-text' || obj.type === 'text' || obj.type === 'IText')) {
+                        // Ensure text object has proper width for wrapping
+                        const textWidth = obj.width || 200;
                         obj.set('text', String(newValue));
+                        obj.set('width', textWidth);
                         console.log('Updated text: ' + dynamicField + ' = ' + String(newValue).substring(0, 50));
                     }
                 }

@@ -101,7 +101,18 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
                 const objType = obj.type?.toLowerCase();
                 if (objType && (objType.includes('text') || objType === 'itext' || objType === 'text')) {
                     console.log('[CardGenerator] DEBUG: Handling as text object')
-                    ;(obj as fabric.Text).set('text', newValue) as any
+                    const textObj = obj as fabric.IText
+                    
+                    // Ensure text object has proper width for wrapping
+                    const textWidth = obj.width || 200
+                    textObj.set({
+                        text: newValue,
+                        width: textWidth
+                    })
+                    
+                    // Force dimension recalculation
+                    textObj.setCoords()
+                    console.log('[CardGenerator] DEBUG: Text updated, width:', textObj.width, 'height:', textObj.height)
                 }
                 // Handle image placeholders (rectangles with image dynamic field)
                 else if ((obj.type === 'rect' || obj.type === 'Rect') && dynamicField === 'image' && newValue) {
