@@ -18,8 +18,6 @@ model User {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   accounts       Account[]
-  dataMappings   DataMapping[]
-  newsSources    NewsSource[]
   notifications  Notification[]
   sessions       Session[]
   socialAccounts SocialAccount[]
@@ -78,7 +76,6 @@ model Template {
   userId       String
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
-  dataMappings DataMapping[]
   newsCards    NewsCard[]
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -87,57 +84,14 @@ model Template {
   @@map("templates")
 }
 
-model NewsSource {
-  id              String        @id @default(cuid())
-  name            String
-  type            SourceType
-  config          Json
-  updateFrequency Int           @default(60)
-  enabled         Boolean       @default(true)
-  lastFetchedAt   DateTime?
-  lastError       String?
-  userId          String
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  dataMappings    DataMapping[]
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([enabled])
-  @@map("news_sources")
-}
-
-model DataMapping {
-  id              String     @id @default(cuid())
-  newsSourceId    String
-  templateId      String
-  sourceFields    Json
-  transformations Json?
-  fallbackValues  Json?
-  userId          String
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
-  newsSource      NewsSource @relation(fields: [newsSourceId], references: [id], onDelete: Cascade)
-  template        Template   @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  newsCards       NewsCard[]
-
-  @@index([newsSourceId])
-  @@index([templateId])
-  @@index([userId])
-  @@map("data_mappings")
-}
-
 model NewsCard {
   id            String       @id @default(cuid())
   imageUrl      String?
   status        CardStatus   @default(DRAFT)
   sourceData    Json
   templateId    String
-  dataMappingId String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
-  dataMapping   DataMapping? @relation(fields: [dataMappingId], references: [id])
   template      Template     @relation(fields: [templateId], references: [id], onDelete: Cascade)
   posts         Post[]
 
@@ -218,6 +172,40 @@ model Font {
   @@map("fonts")
 }
 
+model AutopilotSettings {
+  id              String   @id @default(cuid())
+  isEnabled       Boolean  @default(false)
+  templateId      String?
+  checkInterval   Int      @default(15) // minutes
+  generateCards   Boolean  @default(true)
+  sensitiveFilter Boolean  @default(true)
+  notifyOnNewCard Boolean  @default(true)
+  lastRunAt       DateTime?
+  lastError       String?
+  userId          String   @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([isEnabled])
+  @@map("autopilot_settings")
+}
+
+model AutopilotRun {
+  id           String          @id @default(cuid())
+  status       AutopilotStatus @default(RUNNING)
+  startedAt    DateTime        @default(now())
+  completedAt  DateTime?
+  newsFound    Int             @default(0)
+  cardsCreated Int             @default(0)
+  skipped      Int             @default(0)
+  errors       String?
+  userId       String
+
+  @@index([userId])
+  @@index([startedAt])
+  @@map("autopilot_runs")
+}
+
 model PostedLink {
   id        String   @id @default(cuid())
   url       String   @unique
@@ -229,6 +217,18 @@ model PostedLink {
   @@index([url])
   @@index([source])
   @@map("posted_links")
+}
+
+model SensitiveWord {
+  id        String   @id @default(cuid())
+  word      String   @unique
+  isActive  Boolean  @default(true)
+  userId    String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isActive])
+  @@map("sensitive_words")
 }
 
 enum UserRole {
@@ -244,14 +244,6 @@ enum TemplateCategory {
   INFOGRAPHIC
   QUOTE
   CUSTOM
-}
-
-enum SourceType {
-  RSS
-  API
-  MANUAL
-  AUTO
-  BANGLADESH_GUARDIAN
 }
 
 enum CardStatus {
@@ -274,4 +266,11 @@ enum PostStatus {
   POSTING
   POSTED
   FAILED
+}
+
+enum AutopilotStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
 }

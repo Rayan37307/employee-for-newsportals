@@ -3,7 +3,7 @@ import axios from 'axios';
 import { load } from 'cheerio';
 
 // Configuration
-const NEWS_URL = "https://www.bangladeshguardian.com/latest";
+const BASE_URL = "https://www.bangladeshguardian.com";
 
 // Interface for news articles
 export interface NewsItem {
@@ -60,52 +60,216 @@ export function sanitizeText(text: string): string {
 }
 
 /**
- * Fetch the latest news from Bangladesh Guardian
+ * Generate today's sitemap URL
  */
-export async function getLatestNews(): Promise<NewsItem[]> {
-  console.log('🔍 Checking for latest news...');
-  
+function getTodaySitemapUrl(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `https://www.bangladeshguardian.com/english-sitemap/sitemap-daily-${year}-${month}-${day}.xml`;
+}
+
+/**
+ * Fetch title from article page
+ */
+async function fetchArticleTitle(url: string): Promise<string | null> {
   try {
-    // Try requests + Cheerio first (faster)
-    const response = await axios.get(NEWS_URL, {
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' 
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      timeout: 10000
+    });
+
+    const $ = load(response.data);
+
+    // Try og:title first, then title tag
+    const ogTitle = $('meta[property="og:title"]').attr('content');
+    if (ogTitle) return ogTitle.trim();
+
+    const titleTag = $('title').text().trim();
+    if (titleTag) return titleTag.split('|')[0].split('-')[0].trim();
+
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Fetch complete article data from article page
+ */
+async function fetchArticleData(url: string): Promise<{
+  url: string;
+  title: string | null;
+  description: string | null;
+  image: string | null;
+  date: string | null;
+} | null> {
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       },
       timeout: 15000
     });
-    
+
+    const $ = load(response.data);
+
+    // Extract title
+    let title = null;
+    const ogTitle = $('meta[property="og:title"]').attr('content');
+    if (ogTitle) {
+      title = ogTitle.trim();
+    } else {
+      const titleTag = $('title').text().trim();
+      if (titleTag) {
+        title = titleTag.split('|')[0].split('-')[0].trim();
+      } else {
+        const h1 = $('h1').first().text().trim();
+        if (h1) title = h1;
+      }
+    }
+
+    // Extract description
+    let description = null;
+    const ogDesc = $('meta[property="og:description"]').attr('content');
+    if (ogDesc) {
+      description = ogDesc.trim();
+    } else {
+      const metaDesc = $('meta[name="description"]').attr('content');
+      if (metaDesc) {
+        description = metaDesc.trim();
+      } else {
+        // Get first paragraph
+        const firstP = $('p').first().text().trim();
+        if (firstP && firstP.length > 50) {
+          description = firstP.substring(0, 200) + '...';
+        }
+      }
+    }
+
+    // Extract image
+    let image = null;
+    const ogImage = $('meta[property="og:image"]').attr('content');
+    if (ogImage) {
+      image = ogImage.trim();
+    }
+
+    // Extract date
+    let date = null;
+    const publishedTime = $('meta[property="article:published_time"]').attr('content');
+    if (publishedTime) {
+      date = publishedTime.trim();
+    } else {
+      // Look for time elements or date strings
+      const timeEl = $('time').attr('datetime');
+      if (timeEl) {
+        date = timeEl.trim();
+      }
+    }
+
+    return {
+      url,
+      title,
+      description,
+      image,
+      date
+    };
+  } catch (error) {
+    console.error(`Error fetching article data from ${url}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Fetch the latest news from Bangladesh Guardian by scraping /latest/ page
+ */
+export async function getLatestNews(): Promise<NewsItem[]> {
+  console.log('🔍 Checking for latest news from Bangladesh Guardian...');
+
+  try {
+    // Fetch the /latest/ page
+    const latestUrl = `${BASE_URL}/latest/`;
+    console.log(`  Fetching ${latestUrl}...`);
+
+    const response = await axios.get(latestUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      },
+      timeout: 30000
+    });
+
     const $ = load(response.data);
     const articles: NewsItem[] = [];
-    
-    $('.LatestNews').each((index, element) => {
-      try {
-        const linkElement = $(element).find('a');
-        const link = linkElement.attr('href');
-        
-        if (!link) return;
-        
-        const fullLink = link.startsWith('/') 
-          ? `https://www.bangladeshguardian.com${link}`
-          : link;
-          
-        const titleElement = $(element).find('h3.Title');
-        const title = titleElement.text().trim();
-        
-        if (title && fullLink) {
+
+    // Extract article links from the page
+    // Look for article links - typically in h2, h3 tags or article containers
+    const articleLinks: string[] = [];
+
+    // Common selectors for article links on news sites
+    const selectors = [
+      'article a[href]',
+      'h2 a[href]',
+      'h3 a[href]',
+      '.post-title a[href]',
+      '.entry-title a[href]',
+      '.article-title a[href]',
+      '.news-item a[href]'
+    ];
+
+    for (const selector of selectors) {
+      $(selector).each((index, element) => {
+        const href = $(element).attr('href');
+        if (href) {
+          const fullUrl = href.startsWith('http') ? href : new URL(href, BASE_URL).href;
+          // Filter for article URLs (contain numbers or specific patterns)
+          if (/\/\d+/.test(fullUrl) && fullUrl.includes(BASE_URL)) {
+            articleLinks.push(fullUrl);
+          }
+        }
+      });
+    }
+
+    // Remove duplicates
+    const uniqueLinks = [...new Set(articleLinks)];
+    console.log(`  Found ${uniqueLinks.length} article links on /latest/ page`);
+
+    // Fetch details for first 20 articles (with concurrency limit)
+    const concurrency = 3;
+    for (let i = 0; i < Math.min(uniqueLinks.length, 20); i += concurrency) {
+      const batch = uniqueLinks.slice(i, i + concurrency);
+      const results = await Promise.all(batch.map(async (url) => {
+        try {
+          const articleData = await fetchArticleData(url);
+          return articleData;
+        } catch (error) {
+          console.error(`Error fetching ${url}:`, error);
+          return null;
+        }
+      }));
+
+      for (const articleData of results) {
+        if (articleData && articleData.title) {
           articles.push({
-            title: sanitizeText(title),
-            link: fullLink
+            title: sanitizeText(articleData.title),
+            link: articleData.url,
+            description: articleData.description || undefined,
+            image: articleData.image || undefined,
+            date: articleData.date || undefined
           });
         }
-      } catch (error) {
-        console.error('Error parsing article:', error);
       }
-    });
-    
-    console.log(`📰 Found ${articles.length} articles`);
+
+      console.log(`  Processed ${Math.min(i + concurrency, uniqueLinks.length)}/${Math.min(uniqueLinks.length, 20)}`);
+    }
+
+    console.log(`📰 Found ${articles.length} articles from Bangladesh Guardian`);
     return articles;
+
   } catch (error) {
-    console.error('❌ Error fetching news:', error);
+    console.error('❌ Error fetching /latest/ page:', error instanceof Error ? error.message : 'Unknown error');
     return [];
   }
 }

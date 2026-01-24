@@ -52,6 +52,46 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
         // @ts-ignore
         const canvas = new fabric.StaticCanvas(nodeCanvasEl, { width, height })
 
+        // Handle background image
+        if (canvasData.backgroundImage && canvasData.backgroundImage.src) {
+            try {
+                console.log('[CardGenerator] DEBUG: Loading background image')
+                const bgImg = await fabric.FabricImage.fromURL(canvasData.backgroundImage.src)
+                
+                // Calculate scale to cover entire canvas
+                const scaleX = width / bgImg.width!
+                const scaleY = height / bgImg.height!
+                const scale = Math.max(scaleX, scaleY)
+                
+                // Calculate position to center
+                const scaledWidth = bgImg.width! * scale
+                const scaledHeight = bgImg.height! * scale
+                const left = (width - scaledWidth) / 2
+                const top = (height - scaledHeight) / 2
+                
+                ;(canvas as any).backgroundImage = bgImg
+                bgImg.set({
+                    scaleX: scale,
+                    scaleY: scale,
+                    left: left,
+                    top: top,
+                    originX: 'left',
+                    originY: 'top',
+                })
+                
+                console.log('[CardGenerator] DEBUG: Background image loaded:', {
+                    originalSize: `${bgImg.width}x${bgImg.height}`,
+                    scaledSize: `${scaledWidth.toFixed(0)}x${scaledHeight.toFixed(0)}`
+                })
+            } catch (error) {
+                console.error('[CardGenerator] ERROR loading background image:', error)
+                // Fallback to solid color
+                canvas.backgroundColor = '#ffffff'
+            }
+        } else {
+            canvas.backgroundColor = canvasData.backgroundColor || '#ffffff'
+        }
+
         // Load data
         await canvas.loadFromJSON(canvasData)
 
@@ -113,6 +153,42 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
                     // Force dimension recalculation
                     textObj.setCoords()
                     console.log('[CardGenerator] DEBUG: Text updated, width:', textObj.width, 'height:', textObj.height)
+                }
+                // Handle image objects (regular images on canvas)
+                else if ((obj.type === 'image' || obj.type === 'fabric-image' || obj.type === 'Image') && (obj as any)._imageSrc) {
+                    console.log('[CardGenerator] DEBUG: Handling as image object')
+                    try {
+                        let imageSrc = (obj as any)._imageSrc
+                        let imageDataUrl = imageSrc
+
+                        if (!imageSrc.startsWith('data:image')) {
+                            // Fetch URL and convert to data URL
+                            const response = await fetch(imageSrc)
+                            if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`)
+                            const arrayBuffer = await response.arrayBuffer()
+                            const buffer = Buffer.from(arrayBuffer)
+                            const mimeType = response.headers.get('content-type') || 'image/jpeg'
+                            imageDataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
+                        }
+
+                        const img = await loadImage(imageDataUrl)
+                        
+                        const fabricImage = new fabric.FabricImage(img, {
+                            left: obj.left,
+                            top: obj.top,
+                            scaleX: obj.scaleX || 1,
+                            scaleY: obj.scaleY || 1,
+                            angle: obj.angle || 0,
+                            originX: obj.originX || 'left',
+                            originY: obj.originY || 'top',
+                        })
+
+                        canvas.remove(obj)
+                        canvas.add(fabricImage)
+                        console.log('[CardGenerator] DEBUG: Image object restored successfully')
+                    } catch (error) {
+                        console.error('[CardGenerator] ERROR handling image object:', error)
+                    }
                 }
                 // Handle image placeholders (rectangles with image dynamic field)
                 else if ((obj.type === 'rect' || obj.type === 'Rect') && dynamicField === 'image' && newValue) {

@@ -13,58 +13,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       return NextResponse.json({ error: 'Source ID is required' }, { status: 400 });
     }
 
-    // Fetch the source to get its type and configuration
-    const source = await prisma.newsSource.findUnique({
-      where: { id: sourceId }
-    });
+    // Since we're Bangladesh Guardian only, fetch directly from Bangladesh Guardian
+    const newsItems = await getLatestNews();
 
-    if (!source) {
-      return NextResponse.json({ error: 'Source not found' }, { status: 404 });
+    if (!newsItems || newsItems.length === 0) {
+      return NextResponse.json({ error: 'Failed to fetch news from Bangladesh Guardian' }, { status: 500 });
     }
-
-    // Import the universal news agent to handle different source types
-    const { UniversalNewsAgent } = await import('@/lib/universal-news-agent');
-
-    // Create agent with source config
-    const config = (source.config || {}) as { url?: string; endpoint?: string }
-    const agent = new UniversalNewsAgent({
-      url: config.url || config.endpoint || '',
-      maxConcurrency: 3,
-      cacheTimeout: 3600000,
-      userAgent: 'News-Agent/1.0'
-    });
-
-    // Fetch news based on source type and configuration
-    const result = await agent.fetchNews();
-    await agent.cleanup();
-
-    if (!result.success || result.articles.length === 0) {
-      return NextResponse.json({ error: result.error || 'Failed to fetch news from source' }, { status: 500 });
-    }
-
-    // Filter valid articles
-    const validArticles = result.articles.filter((article: any) => {
-      return !article.extraction_failed &&
-             !article.extraction_trace?.is_listing_page &&
-             !article.extraction_trace?.is_contact_page &&
-             !article.extraction_trace?.is_advertisement &&
-             (article.extraction_trace?.content_quality_score || 100) >= 60;
-    });
-
-    // Map articles to news items format expected by the rest of the code
-    const newsItems = validArticles.map((article: any) => ({
-      title: article.title,
-      content: article.content,
-      description: article.description,
-      summary: article.description,
-      link: article.url,
-      publishedAt: new Date(article.published_at),
-      published_at: article.published_at,
-      author: article.author,
-      image: article.image,
-      category: article.category,
-      source: article.source
-    }));
 
     // Process each news item to extract content
     const processedItems = [];
@@ -79,9 +33,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       if (!existingCard) {
         processedItems.push({
           ...item,
-          image: item.image || null, // Use image from the article data
+          image: item.image || null,
           date: new Date().toISOString(),
-          content: item.content || '' // Use content from the article data
+          content: item.description || ''
         });
       }
     }
@@ -92,7 +46,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       count: processedItems.length
     });
   } catch (error) {
-    console.error('Error fetching news from source:', error);
+    console.error('Error fetching news from Bangladesh Guardian:', error);
     return NextResponse.json(
       { error: 'Failed to fetch news', details: (error as Error).message },
       { status: 500 }
@@ -108,58 +62,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: 'Source ID is required' }, { status: 400 });
     }
 
-    // Fetch the source to get its type and configuration
-    const source = await prisma.newsSource.findUnique({
-      where: { id: sourceId }
-    });
+    // Since we're Bangladesh Guardian only, fetch directly from Bangladesh Guardian
+    const newsItems = await getLatestNews();
 
-    if (!source) {
-      return NextResponse.json({ error: 'Source not found' }, { status: 404 });
+    if (!newsItems || newsItems.length === 0) {
+      return NextResponse.json({ error: 'Failed to fetch news from Bangladesh Guardian' }, { status: 500 });
     }
-
-    // Import the universal news agent to handle different source types
-    const { UniversalNewsAgent } = await import('@/lib/universal-news-agent');
-
-    // Create agent with source config
-    const config = (source.config || {}) as { url?: string; endpoint?: string }
-    const agent = new UniversalNewsAgent({
-      url: config.url || config.endpoint || '',
-      maxConcurrency: 3,
-      cacheTimeout: 3600000,
-      userAgent: 'News-Agent/1.0'
-    });
-
-    // Fetch news based on source type and configuration
-    const result = await agent.fetchNews();
-    await agent.cleanup();
-
-    if (!result.success || result.articles.length === 0) {
-      return NextResponse.json({ error: result.error || 'Failed to fetch news from source' }, { status: 500 });
-    }
-
-    // Filter valid articles
-    const validArticles = result.articles.filter((article: any) => {
-      return !article.extraction_failed &&
-             !article.extraction_trace?.is_listing_page &&
-             !article.extraction_trace?.is_contact_page &&
-             !article.extraction_trace?.is_advertisement &&
-             (article.extraction_trace?.content_quality_score || 100) >= 60;
-    });
-
-    // Map articles to news items format expected by the rest of the code
-    const newsItems = validArticles.map((article: any) => ({
-      title: article.title,
-      content: article.content,
-      description: article.description,
-      summary: article.description,
-      link: article.url,
-      publishedAt: new Date(article.published_at),
-      published_at: article.published_at,
-      author: article.author,
-      image: article.image,
-      category: article.category,
-      source: article.source
-    }));
 
     // Process each news item to generate cards
     let processedCount = 0;
@@ -184,45 +92,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         });
 
         if (template) {
-          // Find the data mapping for this template
-          const mapping = await prisma.dataMapping.findFirst({
-            where: { templateId: template.id }
-          });
-
           // Use image from the article data
           const imageBuffer = item.image ? Buffer.from(item.image.replace(/^data:image\/\w+;base64,/, ''), 'base64') : null;
 
-          // Prepare the data for the template based on the mapping
-          let mappedData: Record<string, any> = {};
-          
-          if (mapping && mapping.sourceFields) {
-            // Use the mapping to transform the news item
-            const sourceFields = mapping.sourceFields as Record<string, string>
-            for (const [templateField, sourceField] of Object.entries(sourceFields)) {
-              if (sourceField && item[sourceField as keyof typeof item]) {
-                mappedData[templateField] = item[sourceField as keyof typeof item];
-              } else {
-                // Use fallback or default values
-                if (templateField === 'date') {
-                  mappedData[templateField] = new Date().toISOString().split('T')[0];
-                } else if (templateField === 'title') {
-                  mappedData[templateField] = item.title || 'Untitled';
-                } else if (templateField === 'image') {
-                  mappedData[templateField] = imageBuffer ? `data:image/jpeg;base64,${imageBuffer.toString('base64')}` : '';
-                } else {
-                  mappedData[templateField] = item[sourceField as keyof typeof item] || '';
-                }
-              }
-            }
-          } else {
-            // Fallback mapping if no specific mapping exists
-            mappedData = {
-              title: item.title,
-              date: new Date().toISOString().split('T')[0],
-              subtitle: item.description || '',
-              image: item.image || '',
-            };
-          }
+          // Prepare the data for the template (simplified mapping)
+          const mappedData = {
+            title: item.title,
+            date: new Date().toISOString().split('T')[0],
+            subtitle: item.description || '',
+            image: item.image || '',
+          };
 
           try {
             const logPrefix = '[Sources][Fetch][Image]';
@@ -275,12 +154,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
                   image: item.image || null
                 },
                 templateId: template.id,
-                dataMappingId: mapping?.id || null,
               }
             });
 
             processedCount++;
-            console.log(`${logPrefix} SUCCESS: Card generated (id=${mapping?.id || 'none'}, processed=${processedCount})`);
+            console.log(`${logPrefix} SUCCESS: Card generated (processed=${processedCount})`);
           } catch (genError) {
             const errorMessage = genError instanceof Error ? genError.message : 'Unknown error';
             console.error(`[Sources][Fetch] ERROR: ${errorMessage}`);
@@ -295,7 +173,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       processedCount
     });
   } catch (error) {
-    console.error('Error processing news from source:', error);
+    console.error('Error processing news from Bangladesh Guardian:', error);
     return NextResponse.json(
       { error: 'Failed to process news', details: (error as Error).message },
       { status: 500 }

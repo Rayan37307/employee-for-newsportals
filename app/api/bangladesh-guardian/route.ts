@@ -231,36 +231,161 @@ export async function GET() {
     const postedUrls = new Set(postedLinks.map(p => p.url));
     console.log(`📋 Found ${postedUrls.size} previously posted links`);
     
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ 
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ]
+    });
     const page = await browser.newPage();
     
-    await page.goto(NEWS_URL, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForTimeout(3000);
+    // Set user agent and additional headers
+    await page.route('**/*', (route) => {
+      const headers = {
+        ...route.request().headers(),
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      };
+      route.continue({ headers });
+    });
+    
+    console.log(`🌐 Navigating to ${NEWS_URL}...`);
+    
+    try {
+      await page.goto(NEWS_URL, { 
+        waitUntil: 'domcontentloaded', 
+        timeout: 45000 
+      });
+      console.log('✅ Page loaded successfully');
+    } catch (error) {
+      console.error('❌ Failed to load page with Playwright:', error);
+      await browser.close();
+      
+      // Fallback: Try using the bangladesh-guardian-agent
+      console.log('🔄 Trying fallback method with bangladesh-guardian-agent...');
+      try {
+        const { getLatestNews } = await import('@/lib/bangladesh-guardian-agent');
+        const newsItems = await getLatestNews();
+        
+        console.log(`✅ Fallback successful: Found ${newsItems.length} articles`);
+        
+        // Convert to expected format
+        const articles = newsItems.map(item => ({
+          title: item.title,
+          link: item.link
+        }));
+        
+        // Filter out already posted articles
+        const newArticles = articles.filter(a => !postedUrls.has(a.link));
+        console.log(`🆕 ${newArticles.length} new articles (not yet posted)`);
+        
+        if (newArticles.length === 0) {
+          return NextResponse.json({
+            success: true,
+            message: 'No new articles',
+            count: 0,
+            articles: []
+          });
+        }
+
+        // Process articles (simplified for fallback)
+        const processedArticles: ProcessedArticle[] = [];
+        
+        for (const article of newArticles.slice(0, 5)) {
+          const newsItem = newsItems.find(item => item.link === article.link);
+          if (newsItem) {
+            processedArticles.push({
+              title: article.title,
+              sanitizedTitle: sanitizeText(article.title),
+              link: article.link,
+              image: newsItem.image || null,
+              content: newsItem.description || '',
+              description: newsItem.description || '',
+              author: '', // NewsItem doesn't have author
+              publishedAt: newsItem.date || new Date().toISOString(),
+              category: 'news', // NewsItem doesn't have category
+              isNew: true
+            });
+          }
+        }
+
+        await browser.close();
+        return NextResponse.json({
+          success: true,
+          message: `Found ${processedArticles.length} new articles (fallback method)`,
+          count: processedArticles.length,
+          articles: processedArticles
+        });
+        
+      } catch (fallbackError) {
+        console.error('❌ Fallback method also failed:', fallbackError);
+        return NextResponse.json({
+          success: false,
+          error: 'Both Playwright and fallback methods failed to access Bangladesh Guardian.',
+          details: {
+            playwright: (error as Error).message,
+            fallback: (fallbackError as Error).message
+          }
+        }, { status: 500 });
+      }
+    }
+    
+    // Wait a bit for dynamic content
+    await page.waitForTimeout(2000);
     
     const articles: Article[] = await page.evaluate(() => {
       const results: Article[] = [];
-      const allLinks = document.querySelectorAll('a[href]');
       const seenUrls = new Set<string>();
       
-      allLinks.forEach((link) => {
-        const href = (link as HTMLAnchorElement).href;
-        const text = link.textContent?.trim();
+      console.log('Looking for articles with specific selectors...');
+      
+      // Use the same selectors as the bangladesh-guardian-agent
+      const selectors = [
+        'article a[href]',
+        'h2 a[href]',
+        'h3 a[href]',
+        '.post-title a[href]',
+        '.entry-title a[href]',
+        '.article-title a[href]',
+        '.news-item a[href]'
+      ];
+
+      for (const selector of selectors) {
+        const links = document.querySelectorAll(selector);
+        console.log(`Found ${links.length} links with selector: ${selector}`);
         
-        if (href.includes('bangladeshguardian.com') && 
-            href.match(/\/\d+$/) &&
-            !href.includes('/latest') &&
-            !href.includes('/category') &&
-            !href.includes('/search') &&
-            !href.includes('/page') &&
-            text && 
-            text.length > 15 &&
-            text.length < 200 &&
-            !seenUrls.has(href)) {
+        links.forEach((link) => {
+          const href = (link as HTMLAnchorElement).href;
+          const text = link.textContent?.trim();
           
-          seenUrls.add(href);
-          results.push({ title: text, link: href });
-        }
-      });
+          if (href.includes('bangladeshguardian.com') && 
+              /\/\d+/.test(href) && // Contains numbers (article ID)
+              !href.includes('/latest') &&
+              !href.includes('/category') &&
+              !href.includes('/search') &&
+              !href.includes('/page') &&
+              text && 
+              text.length > 15 &&
+              text.length < 200 &&
+              !seenUrls.has(href)) {
+            
+            seenUrls.add(href);
+            results.push({ title: text, link: href });
+            console.log('Added article:', text.substring(0, 50));
+          }
+        });
+      }
       
       return results;
     });

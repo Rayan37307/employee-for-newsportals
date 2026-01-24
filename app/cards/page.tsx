@@ -397,22 +397,34 @@ export default function CardsPage() {
 
     const { width, height } = getCanvasDimensions(canvasData)
     const objects = canvasData.objects || []
+    const backgroundImage = canvasData.backgroundImage
+    const backgroundColor = canvasData.backgroundColor || '#ffffff'
 
     const fontFaceStyles = getFontFaceStyles(fonts)
+
+    // Calculate background style for proper cover fit
+    let bgStyle: React.CSSProperties = {
+      width: `${width}px`,
+      height: `${height}px`,
+      position: 'relative',
+      backgroundColor: backgroundColor,
+      overflow: 'hidden',
+      border: '1px solid #e0e0e0',
+    }
+
+    if (backgroundImage?.src) {
+      bgStyle.backgroundImage = `url(${backgroundImage.src})`
+      bgStyle.backgroundSize = 'cover'
+      bgStyle.backgroundPosition = 'center'
+      bgStyle.backgroundRepeat = 'no-repeat'
+    }
 
     return (
       <>
         <style>{fontFaceStyles}</style>
         <div 
           ref={cardPreviewRef}
-          style={{
-            width: `${width}px`,
-            height: `${height}px`,
-            position: 'relative',
-            backgroundColor: canvasData.backgroundColor || '#ffffff',
-            overflow: 'hidden',
-            border: '1px solid #e0e0e0',
-          }}
+          style={bgStyle}
         >
         {objects.map((obj: any, index: number) => {
           const type = (obj.type || '').toLowerCase()
@@ -561,6 +573,53 @@ export default function CardsPage() {
                   borderRadius: '50%',
                 }}
               />
+            )
+          }
+          
+          // Handle image objects
+          if (type === 'image' || type === 'fabric-image') {
+            const imgWidth = (obj.width || 100) * (obj.scaleX || 1)
+            const imgHeight = (obj.height || 100) * (obj.scaleY || 1)
+            
+            // Check if there's a saved image src
+            const imageSrc = obj._imageSrc || obj.src
+            
+            if (imageSrc) {
+              return (
+                <img
+                  key={index}
+                  src={imageSrc}
+                  alt="Canvas image"
+                  crossOrigin="anonymous"
+                  style={{
+                    position: 'absolute',
+                    left: left,
+                    top: top,
+                    width: imgWidth,
+                    height: imgHeight,
+                    objectFit: 'cover',
+                  }}
+                />
+              )
+            }
+            
+            return (
+              <div
+                key={index}
+                style={{
+                  position: 'absolute',
+                  left: left,
+                  top: top,
+                  width: imgWidth,
+                  height: imgHeight,
+                  backgroundColor: '#e0e0e0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <span className="text-xs text-gray-500">Image</span>
+              </div>
             )
           }
           

@@ -46,10 +46,13 @@ function CanvasEditorContent() {
         sendBackward,
         bringForward,
         bringToFront,
+        setBackgroundImage,
+        clearBackgroundImage,
     } = useCanvas()
 
     const [showSaveModal, setShowSaveModal] = useState(false)
     const [showImagePicker, setShowImagePicker] = useState(false)
+    const [showBgImagePicker, setShowBgImagePicker] = useState(false)
     const [templateName, setTemplateName] = useState('')
     const [templateDescription, setTemplateDescription] = useState('')
     const [saving, setSaving] = useState(false)
@@ -58,6 +61,7 @@ function CanvasEditorContent() {
     const [canvasHeight, setCanvasHeight] = useState(urlHeight)
     const [initialData, setInitialData] = useState<any>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const bgFileInputRef = useRef<HTMLInputElement>(null)
     const { fonts, fetchFonts, uploadFont } = useFonts()
 
     // Load template if templateId is provided
@@ -131,6 +135,30 @@ function CanvasEditorContent() {
             console.error('Error uploading font:', error)
             alert('Failed to upload font')
         }
+    }
+
+    const handleBgImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0]
+        if (!file) return
+
+        if (!file.type.startsWith('image/')) {
+            alert('Please select an image file')
+            return
+        }
+
+        const reader = new FileReader()
+        reader.onload = (e) => {
+            const dataUrl = e.target?.result as string
+            setBackgroundImage(dataUrl)
+            if (bgFileInputRef.current) {
+                bgFileInputRef.current.value = ''
+            }
+        }
+        reader.readAsDataURL(file)
+    }
+
+    const handleClearBgImage = () => {
+        clearBackgroundImage()
     }
 
     const handleExportImage = () => {
@@ -302,6 +330,51 @@ function CanvasEditorContent() {
                                     className="w-full"
                                 >
                                     Choose Image File
+                                </Button>
+                            </div>
+                        </DialogContent>
+                    </Dialog>
+
+                    <Dialog open={showBgImagePicker} onOpenChange={setShowBgImagePicker}>
+                        <DialogTrigger asChild>
+                            <div>
+                                <ToolButton
+                                    icon={<ImageIcon className="w-5 h-5" />}
+                                    label="BG Image"
+                                    onClick={() => setShowBgImagePicker(true)}
+                                />
+                            </div>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-md">
+                            <DialogHeader>
+                                <DialogTitle>Set Background Image</DialogTitle>
+                            </DialogHeader>
+                            <div className="flex flex-col items-center gap-4">
+                                <div className="text-sm text-muted-foreground text-center">
+                                    Select an image to use as background.
+                                </div>
+                                <input
+                                    ref={bgFileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleBgImageUpload}
+                                    className="hidden"
+                                />
+                                <Button
+                                    onClick={() => bgFileInputRef.current?.click()}
+                                    className="w-full"
+                                >
+                                    Choose Image File
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        handleClearBgImage()
+                                        setShowBgImagePicker(false)
+                                    }}
+                                    className="w-full"
+                                >
+                                    Remove Background
                                 </Button>
                             </div>
                         </DialogContent>

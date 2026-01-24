@@ -3,6 +3,7 @@ import db from '@/lib/db'
 import { generateCardImage } from '@/lib/card-generator-puppeteer'
 import { compositeImage, getImagePlaceholder } from '@/lib/image-processor'
 import { publishToFacebook } from '@/lib/social-publisher'
+import { runAutopilot } from './services/autopilot-service'
 
 export async function processScheduledPosts() {
     const now = new Date()
@@ -120,6 +121,53 @@ export async function processScheduledPosts() {
             })
 
             results.push({ id: post.id, status: 'FAILED', error: errorMessage })
+        }
+    }
+
+    return results
+}
+
+export async function processAutopilotRuns() {
+    console.log('[Scheduler][Autopilot] Processing autopilot runs...')
+    
+    const now = new Date()
+    
+    const settings = await db.autopilotSettings.findMany({
+        where: {
+            isEnabled: true,
+            OR: [
+                { lastRunAt: { lt: new Date(now.getTime() - 15 * 60 * 1000) } }, // More than 15 mins ago
+                { lastRunAt: null } // Never run
+            ]
+        }
+    })
+
+    console.log(`[Scheduler][Autopilot] Found ${settings.length} enabled users to process`)
+
+    const results = []
+
+    for (const setting of settings) {
+        try {
+            console.log(`[Scheduler][Autopilot] Running autopilot for user ${setting.userId}`)
+            
+            const result = await runAutopilot(setting.userId)
+            
+            results.push({
+                userId: setting.userId,
+                success: result.success,
+                newsFound: result.newsFound,
+                cardsCreated: result.cardsCreated,
+                errors: result.errors
+            })
+
+            console.log(`[Scheduler][Autopilot] Completed for user ${setting.userId}: ${result.cardsCreated} cards created`)
+        } catch (e: any) {
+            console.error(`[Scheduler][Autopilot] Error for user ${setting.userId}: ${e.message}`)
+            results.push({
+                userId: setting.userId,
+                success: false,
+                error: e.message
+            })
         }
     }
 
