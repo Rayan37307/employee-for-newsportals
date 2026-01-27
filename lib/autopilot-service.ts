@@ -1,4 +1,4 @@
-import { getLatestNews, fetchArticleImage } from '@/lib/bangladesh-guardian-agent';
+import { getLatestNews } from '@/lib/bangladesh-guardian-agent';
 import { generateCardImage } from '@/lib/card-generator-puppeteer';
 import { compositeImage, getImagePlaceholder } from '@/lib/image-processor';
 import prisma from '@/lib/db';
@@ -42,10 +42,8 @@ class AutopilotService {
             });
 
             if (template) {
-              // Find the data mapping for this template
-              const mapping = await prisma.dataMapping.findFirst({
-                where: { templateId: template.id }
-              });
+              // Use empty mapping since dataMapping model was removed
+              let mapping: { sourceFields: Record<string, string> } | null = null;
 
               // Fetch image for the article
               let imageBuffer = null;
@@ -53,11 +51,17 @@ class AutopilotService {
               console.log(`${logPrefix} Fetching image for: ${newsItem.title.substring(0, 50)}...`);
 
               try {
-                imageBuffer = await fetchArticleImage(newsItem.link);
-                if (imageBuffer) {
-                  console.log(`${logPrefix} SUCCESS: Fetched article image (${imageBuffer.length} bytes)`);
+                // Use the image from the newsItem if available
+                if (newsItem.image) {
+                  const imageResponse = await fetch(newsItem.image);
+                  if (imageResponse.ok) {
+                    imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+                    console.log(`${logPrefix} SUCCESS: Fetched article image (${imageBuffer.length} bytes)`);
+                  } else {
+                    console.log(`${logPrefix} INFO: No image found for article (fetch returned ${imageResponse.status})`);
+                  }
                 } else {
-                  console.log(`${logPrefix} INFO: No image found for article (fetchArticleImage returned null)`);
+                  console.log(`${logPrefix} INFO: No image URL available in news item`);
                 }
               } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -66,37 +70,6 @@ class AutopilotService {
 
               // Prepare the data for the template based on the mapping
               let mappedData: Record<string, any> = {};
-
-              if (mapping && mapping.sourceFields) {
-                // Use the mapping to transform the news item
-                const sourceFields = mapping.sourceFields as Record<string, string>
-                for (const [templateField, sourceField] of Object.entries(sourceFields)) {
-                  if (sourceField && newsItem[sourceField as keyof typeof newsItem]) {
-                    mappedData[templateField] = newsItem[sourceField as keyof typeof newsItem];
-                  } else {
-                    // Use fallback or default values
-                    if (templateField === 'date') {
-                      mappedData[templateField] = new Date().toISOString().split('T')[0];
-                    } else if (templateField === 'title') {
-                      mappedData[templateField] = newsItem.title || 'Untitled';
-                    } else if (templateField === 'image') {
-                      mappedData[templateField] = imageBuffer ? `data:image/jpeg;base64,${imageBuffer.toString('base64')}` : '';
-                      console.log(`${logPrefix} Mapped image field: ${imageBuffer ? `dataurl (${imageBuffer.length} bytes)` : 'empty'}`);
-                    } else {
-                      mappedData[templateField] = newsItem[sourceField as keyof typeof newsItem] || '';
-                    }
-                  }
-                }
-              } else {
-                // Fallback mapping if no specific mapping exists
-                mappedData = {
-                  title: newsItem.title,
-                  date: new Date().toISOString().split('T')[0],
-                  subtitle: newsItem.description || '',
-                  image: imageBuffer ? `data:image/jpeg;base64,${imageBuffer.toString('base64')}` : '',
-                };
-                console.log(`${logPrefix} Using fallback mapping: image=${imageBuffer ? `dataurl (${imageBuffer.length} bytes)` : 'empty'}`);
-              }
 
               try {
                 // Generate a news card using the template
@@ -150,7 +123,6 @@ class AutopilotService {
                       image: imageBuffer ? `data:image/jpeg;base64,${imageBuffer.toString('base64')}` : null
                     },
                     templateId: template.id,
-                    dataMappingId: mapping?.id || null,
                   }
                 });
 

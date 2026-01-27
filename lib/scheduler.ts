@@ -16,8 +16,7 @@ export async function processScheduledPosts() {
             socialAccount: true,
             newsCard: {
                 include: {
-                    template: true,
-                    dataMapping: true
+                    template: true
                 }
             }
         },
@@ -39,9 +38,9 @@ export async function processScheduledPosts() {
 
             // 1. Regenerate Image (ensure fresh data/mapping)
             const newsItem = newsCard.sourceData as { image?: string; title?: string; description?: string; date?: string; author?: string; category?: string } || {}
-            const mapping = (newsCard.dataMapping?.sourceFields as Record<string, string>) || {}
+            const mapping = {} // Use empty mapping since dataMapping model was removed
 
-            if (!newsItem || !newsCard.template || !mapping) {
+            if (!newsItem || !newsCard.template) {
                 throw new Error('Missing source data or template')
             }
 

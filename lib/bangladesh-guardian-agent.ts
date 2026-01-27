@@ -1,3 +1,4 @@
+import * as puppeteer from 'puppeteer';
 import { JSDOM } from 'jsdom';
 import axios from 'axios';
 import { load } from 'cheerio';
@@ -126,7 +127,8 @@ async function fetchArticleData(url: string): Promise<{
       const titleTag = $('title').text().trim();
       if (titleTag) {
         title = titleTag.split('|')[0].split('-')[0].trim();
-      } else {
+      }
+      else {
         const h1 = $('h1').first().text().trim();
         if (h1) title = h1;
       }
@@ -189,34 +191,43 @@ async function fetchArticleData(url: string): Promise<{
 export async function getLatestNews(): Promise<NewsItem[]> {
   console.log('🔍 Checking for latest news from Bangladesh Guardian...');
 
+  let browser;
   try {
-    // Fetch the /latest/ page
-    const latestUrl = `${BASE_URL}/latest/`;
-    console.log(`  Fetching ${latestUrl}...`);
+    // Launch Puppeteer
+    browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    const page = await browser.newPage();
 
-    const response = await axios.get(latestUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      },
-      timeout: 30000
+    // Navigate to the /latest/ page
+    const latestUrl = `${BASE_URL}/latest/`;
+    console.log(`  Navigating to ${latestUrl} with Puppeteer...`);
+
+    await page.goto(latestUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // Wait for a common element that indicates content has loaded
+    // This is a heuristic and might need adjustment
+    await page.waitForSelector('article', { timeout: 15000 }).catch(() => {
+        console.warn('  Puppeteer: "article" selector not found within timeout. Continuing anyway.');
     });
 
-    const $ = load(response.data);
+    const html = await page.content();
+    // Save HTML to a temporary file for inspection
+    const fs = require('fs');
+    fs.writeFileSync('./temp-bg-latest.html', html);
+    console.log('  Saved rendered HTML to ./temp-bg-latest.html');
+    const $ = load(html);
     const articles: NewsItem[] = [];
 
     // Extract article links from the page
-    // Look for article links - typically in h2, h3 tags or article containers
+    // Look for article links based on the actual Bangladesh Guardian structure
     const articleLinks: string[] = [];
 
-    // Common selectors for article links on news sites
+    // Specific selectors for Bangladesh Guardian articles
     const selectors = [
-      'article a[href]',
-      'h2 a[href]',
-      'h3 a[href]',
-      '.post-title a[href]',
-      '.entry-title a[href]',
-      '.article-title a[href]',
-      '.news-item a[href]'
+      '.LatestNews a[href]',  // Main article containers
+      '.TopHomeSection a[href]',  // Top section articles
+      '.Latest-container a[href]'  // Latest container articles
     ];
 
     for (const selector of selectors) {
@@ -225,7 +236,7 @@ export async function getLatestNews(): Promise<NewsItem[]> {
         if (href) {
           const fullUrl = href.startsWith('http') ? href : new URL(href, BASE_URL).href;
           // Filter for article URLs (contain numbers or specific patterns)
-          if (/\/\d+/.test(fullUrl) && fullUrl.includes(BASE_URL)) {
+          if ((/\/\d+/.test(fullUrl) || /\d+$/.test(href)) && fullUrl.includes(BASE_URL)) {
             articleLinks.push(fullUrl);
           }
         }
@@ -269,171 +280,11 @@ export async function getLatestNews(): Promise<NewsItem[]> {
     return articles;
 
   } catch (error) {
-    console.error('❌ Error fetching /latest/ page:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Error fetching /latest/ page with Puppeteer:', error instanceof Error ? error.message : 'Unknown error');
     return [];
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
-}
-
-/**
- * Fetch article image from the article page
- */
-export async function fetchArticleImage(articleUrl: string): Promise<Buffer | null> {
-  console.log(`[BangladeshGuardian][ImageFetch] START: ${articleUrl.substring(0, 80)}`);
-
-  try {
-    console.log(`[BangladeshGuardian][ImageFetch] Fetching article page...`);
-
-    const response = await axios.get(articleUrl, {
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' 
-      },
-      timeout: 15000
-    });
-
-    console.log(`[BangladeshGuardian][ImageFetch] Page fetched: status=${response.status}, size=${response.data.length} bytes`);
-
-    const $ = load(response.data);
-
-    // 1. Try meta tags (og:image, twitter:image)
-    const metaImage = $('meta[property="og:image"], meta[name="twitter:image"]').attr('content');
-    console.log(`[BangladeshGuardian][ImageFetch] Meta og:image check: ${metaImage ? 'found' : 'not found'}`);
-
-    if (metaImage) {
-      const imageUrl = new URL(metaImage, articleUrl).href;
-      console.log(`[BangladeshGuardian][ImageFetch] Meta image URL: ${imageUrl.substring(0, 80)}`);
-      const imageBuffer = await downloadImage(imageUrl);
-      if (imageBuffer) {
-        console.log(`[BangladeshGuardian][ImageFetch] SUCCESS: Downloaded from meta tag (${imageBuffer.length} bytes)`);
-        return imageBuffer;
-      } else {
-        console.warn(`[BangladeshGuardian][ImageFetch] WARNING: Meta image download failed`);
-      }
-    }
-
-    // 2. Try JSON-LD
-    const jsonLdScripts = $('script[type="application/ld+json"]');
-    console.log(`[BangladeshGuardian][ImageFetch] JSON-LD scripts found: ${jsonLdScripts.length}`);
-
-    for (let i = 0; i < jsonLdScripts.length; i++) {
-      try {
-        const jsonData = JSON.parse($(jsonLdScripts[i]).text());
-        if (jsonData && typeof jsonData === 'object') {
-          let imageUrl = null;
-          
-          if (Array.isArray(jsonData)) {
-            for (const item of jsonData) {
-              if (item.image) {
-                imageUrl = typeof item.image === 'string' ? item.image : item.image.url;
-                console.log(`[BangladeshGuardian][ImageFetch] JSON-LD array image found: ${String(imageUrl).substring(0, 60)}`);
-                break;
-              }
-            }
-          } else if (jsonData.image) {
-            imageUrl = typeof jsonData.image === 'string' ? jsonData.image : jsonData.image.url;
-            console.log(`[BangladeshGuardian][ImageFetch] JSON-LD image found: ${String(imageUrl).substring(0, 60)}`);
-          }
-          
-          if (imageUrl) {
-            const fullImageUrl = new URL(imageUrl, articleUrl).href;
-            const imageBuffer = await downloadImage(fullImageUrl);
-            if (imageBuffer) {
-              console.log(`[BangladeshGuardian][ImageFetch] SUCCESS: Downloaded from JSON-LD (${imageBuffer.length} bytes)`);
-              return imageBuffer;
-            } else {
-              console.warn(`[BangladeshGuardian][ImageFetch] WARNING: JSON-LD image download failed`);
-            }
-          }
-        }
-      } catch (e) {
-        // Skip invalid JSON
-        continue;
-      }
-    }
-
-    // 3. Try in-article images
-    const imgElements = $('img');
-    console.log(`[BangladeshGuardian][ImageFetch] <img> elements found: ${imgElements.length}`);
-
-    for (let i = 0; i < imgElements.length; i++) {
-      const img = $(imgElements[i]);
-      const src = img.attr('src') || 
-                 img.attr('data-src') || 
-                 img.attr('data-original') ||
-                 img.attr('srcset')?.split(',')[0]?.split(' ')[0];
-      
-      if (!src) continue;
-      
-      const fullSrc = new URL(src, articleUrl).href;
-      console.log(`[BangladeshGuardian][ImageFetch] Checking img[${i}]: ${fullSrc.substring(0, 60)}`);
-      
-      // Skip logos and small images
-      if (isProbablyLogo(fullSrc)) {
-        console.log(`[BangladeshGuardian][ImageFetch] Skipping (probable logo): ${fullSrc.substring(0, 40)}`);
-        continue;
-      }
-      
-      const imageBuffer = await downloadImage(fullSrc);
-      if (imageBuffer) {
-        console.log(`[BangladeshGuardian][ImageFetch] SUCCESS: Downloaded from <img> element (${imageBuffer.length} bytes)`);
-        return imageBuffer;
-      }
-    }
-
-    console.warn(`[BangladeshGuardian][ImageFetch] WARNING: No suitable image found - returning null`);
-    return null;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[BangladeshGuardian][ImageFetch] ERROR: ${errorMessage}`);
-    if (error instanceof Error && error.stack) {
-      console.error(`[BangladeshGuardian][ImageFetch] Stack: ${error.stack.split('\n').slice(0, 3).join('\n')}`);
-    }
-    return null;
-  }
-}
-
-/**
- * Download image from URL
- */
-async function downloadImage(url: string): Promise<Buffer | null> {
-  console.log(`[BangladeshGuardian][Download] START: ${url.substring(0, 80)}`);
-
-  try {
-    const response = await axios.get(url, {
-      responseType: 'arraybuffer',
-      timeout: 15000
-    });
-    
-    console.log(`[BangladeshGuardian][Download] Response: status=${response.status}, size=${response.data.byteLength} bytes`);
-
-    if (response.status === 200) {
-      const buffer = Buffer.from(response.data);
-      console.log(`[BangladeshGuardian][Download] SUCCESS: ${buffer.length} bytes`);
-      return buffer;
-    }
-    
-    console.warn(`[BangladeshGuardian][Download] WARNING: Unexpected status ${response.status} - returning null`);
-    return null;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    const errorStatus = axios.isAxiosError(error) ? ` (status ${error.response?.status})` : '';
-    console.error(`[BangladeshGuardian][Download] ERROR: ${errorMessage}${errorStatus}`);
-    return null;
-  }
-}
-
-/**
- * Check if URL is probably a logo
- */
-function isProbablyLogo(url: string): boolean {
-  if (!url) return true;
-  const lowered = url.toLowerCase();
-  const bannedKeywords = [
-    'logo',
-    'favicon',
-    'sprite',
-    'placeholder',
-    'default',
-    'avatar',
-  ];
-  return bannedKeywords.some(k => lowered.includes(k));
 }

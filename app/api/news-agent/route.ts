@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateCardImage } from '@/lib/card-generator-puppeteer';
 import { compositeImage, getImagePlaceholder, validateImage } from '@/lib/image-processor';
 import prisma from '@/lib/db';
-import { getLatestNews, fetchArticleImage, sanitizeText } from '@/lib/bangladesh-guardian-agent';
+import { getLatestNews, sanitizeText } from '@/lib/bangladesh-guardian-agent';
 import { autopilotService } from '@/lib/autopilot-service';
 
 // In-memory storage for tracking posted links (in production, use database)
@@ -83,45 +83,15 @@ export async function POST(request: NextRequest) {
 
           console.log(`${logPrefix} Template found: ${template.name}`);
 
-          // Find the data mapping for this template
-          const mapping = await prisma.dataMapping.findFirst({
-            where: { templateId }
-          });
-
-          console.log(`${logPrefix} Data mapping: ${mapping ? mapping.id : 'none'}`);
-
-          let mappedData: Record<string, any> = {};
-
-          if (mapping && mapping.sourceFields) {
-            // Use the mapping to transform the news item
-            const sourceFields = mapping.sourceFields as Record<string, string>
-            for (const [templateField, sourceField] of Object.entries(sourceFields)) {
-              if (sourceField && newsItem[sourceField as keyof typeof newsItem]) {
-                mappedData[templateField] = newsItem[sourceField as keyof typeof newsItem];
-              } else {
-                // Use fallback or default values
-                if (templateField === 'date') {
-                  mappedData[templateField] = newsItem.date || new Date().toISOString().split('T')[0];
-                } else if (templateField === 'title') {
-                  mappedData[templateField] = newsItem.title || 'Untitled';
-                } else if (templateField === 'image') {
-                  mappedData[templateField] = newsItem.image || '';
-                  console.log(`${logPrefix} Mapped image field from fallback: ${newsItem.image ? 'present' : 'empty'}`);
-                } else {
-                  mappedData[templateField] = newsItem[sourceField as keyof typeof newsItem] || '';
-                }
-              }
-            }
-          } else {
-            // Fallback mapping if no specific mapping exists
-            mappedData = {
-              title: newsItem.title,
-              date: newsItem.date || new Date().toISOString().split('T')[0],
-              subtitle: newsItem.description || '',
-              image: newsItem.image || '',
-            };
-            console.log(`${logPrefix} Using fallback mapping: image=${newsItem.image ? 'present' : 'empty'}`);
-          }
+          // Use default mapping since dataMapping model was removed
+          const mappedData = {
+            title: newsItem.title || 'Untitled',
+            description: newsItem.description || 'No description available',
+            date: newsItem.date || new Date().toISOString().split('T')[0],
+            author: newsItem.author || 'Unknown',
+            category: newsItem.category || 'General',
+            image: newsItem.image || null
+          };
 
           // Generate the card image (with text replacements)
           console.log(`${logPrefix} Generating base card (text only)...`);
@@ -185,7 +155,6 @@ export async function POST(request: NextRequest) {
               status: 'GENERATED',
               sourceData: newsItem,
               templateId: template.id,
-              dataMappingId: mapping?.id || null,
             }
           });
 

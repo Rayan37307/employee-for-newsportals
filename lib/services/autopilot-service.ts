@@ -89,10 +89,8 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
       sensitiveWords = words.map((w: { word: string }) => w.word)
     }
 
-     // Get data mapping for the template
-     const dataMapping = await prisma.dataMapping.findFirst({
-       where: { templateId: settings.templateId },
-     })
+     // Use empty mapping since dataMapping model was removed
+     const dataMapping = null;
 
      // Get news from Bangladesh Guardian
      let newsArticles: ArticleData[] = []
@@ -179,8 +177,8 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
           console.log(`[Autopilot] Generating card for: ${article.title?.substring(0, 50)}...`)
 
           const mapping = dataMapping
-            ? { sourceFields: dataMapping.sourceFields as Record<string, string> }
-            : undefined
+            ? { sourceFields: (dataMapping as any).sourceFields as Record<string, string> }
+            : {}
 
           const imageBuffer = await generateCardImage({
             template,
@@ -212,7 +210,6 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
               status: 'GENERATED',
               sourceData: article as any,
               templateId: settings.templateId!,
-              dataMappingId: dataMapping?.id || null,
             },
           })
 

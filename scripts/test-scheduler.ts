@@ -14,17 +14,7 @@ async function main() {
         create: { email: 'scheduler-test@example.com', name: 'Scheduler Tester' }
     })
 
-    // 1. Source (using upsert or create with unique name if needed, but Manual is fine)
-    const source = await db.newsSource.create({
-        data: {
-            name: `Test Source ${uniqueSuffix}`,
-            type: 'MANUAL',
-            userId: user.id,
-            config: {}
-        }
-    })
-
-    // 2. Template
+    // 1. Template
     const template = await db.template.create({
         data: {
             name: `Test Template ${uniqueSuffix}`,
@@ -33,17 +23,17 @@ async function main() {
         }
     })
 
-    // 3. Mapping
-    const mapping = await db.dataMapping.create({
+    // 2. News Card
+    const newsCard = await db.newsCard.create({
         data: {
-            newsSourceId: source.id,
-            templateId: template.id,
-            userId: user.id,
-            sourceFields: { title: 'T', _social_caption_field: 'title' }
+            status: 'QUEUED',
+            template: { connect: { id: template.id } },
+            sourceData: { title: 'News Item Title' },
+            imageUrl: 'pending'
         }
     })
 
-    // 4. Social Account (Unique pageId)
+    // 3. Social Account (Unique pageId)
     const socialAccount = await db.socialAccount.create({
         data: {
             platform: 'FACEBOOK',
@@ -62,15 +52,7 @@ async function main() {
                 status: 'QUEUED',
                 socialAccount: { connect: { id: socialAccount.id } },
                 scheduledFor: new Date(Date.now() - 1000),
-                newsCard: {
-                    create: {
-                        status: 'QUEUED',
-                        template: { connect: { id: template.id } },
-                        dataMapping: { connect: { id: mapping.id } },
-                        sourceData: { title: 'News Item Title' },
-                        imageUrl: 'pending'
-                    }
-                }
+                newsCard: { connect: { id: newsCard.id } }
             }
         })
 
@@ -96,10 +78,15 @@ async function main() {
     } finally {
         // Cleanup based on IDs created in this run
         // (If crash options above prevent getting here, data remains, but uniqueSuffix prevents collision next time)
-        if (socialAccount) await db.socialAccount.delete({ where: { id: socialAccount.id } }).catch(() => { })
-        if (mapping) await db.dataMapping.delete({ where: { id: mapping.id } }).catch(() => { })
-        if (template) await db.template.delete({ where: { id: template.id } }).catch(() => { })
-        if (source) await db.newsSource.delete({ where: { id: source.id } }).catch(() => { })
+        try {
+            await db.socialAccount.delete({ where: { id: socialAccount.id } }).catch(() => { })
+        } catch (e) {}
+        try {
+            await db.newsCard.delete({ where: { id: newsCard.id } }).catch(() => { })
+        } catch (e) {}
+        try {
+            await db.template.delete({ where: { id: template.id } }).catch(() => { })
+        } catch (e) {}
         // Keep user
     }
 }

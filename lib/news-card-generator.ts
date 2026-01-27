@@ -19,15 +19,8 @@ export async function generateNewsCardFromArticle(
       return { success: false, error: 'Template not found' };
     }
 
-    // Get any associated data mapping for this template
-    const dataMapping = await prisma.dataMapping.findFirst({
-      where: {
-        templateId: templateId
-      }
-    });
-
-    // Prepare dynamic data for the canvas based on the article and mapping
-    const dynamicData = prepareDynamicData(article, dataMapping?.sourceFields);
+    // Prepare dynamic data for the canvas based on the article
+    const dynamicData = prepareDynamicData(article, null);
 
     // In a real implementation, we would:
     // 1. Create a canvas instance on the server
@@ -138,65 +131,50 @@ function getNestedValue(obj: any, path: string): any {
  */
 export async function processNewArticles() {
   try {
-    // Get all active news sources
-    const newsSources = await prisma.newsSource.findMany({
-      where: {
-        enabled: true
-      }
-    });
+    // For now, we'll use the Bangladesh Guardian agent directly
+    // In a real implementation, you would have a more flexible system
 
-    // Process each news source
-    for (const source of newsSources) {
-      // Get the data mapping for this source
-      const dataMapping = await prisma.dataMapping.findFirst({
+    // Fetch latest news from Bangladesh Guardian
+    const { getLatestNews } = await import('./bangladesh-guardian-agent');
+    const articles = await getLatestNews();
+
+    // Get all available templates
+    const templates = await prisma.template.findMany();
+
+    if (templates.length === 0) {
+      console.warn('No templates found, skipping card generation');
+      return;
+    }
+
+    // Use the first template for all articles (in a real implementation, you'd have logic to match articles to templates)
+    const defaultTemplate = templates[0];
+
+    // Process each article
+    for (const article of articles) {
+      // Check if this article has already been processed
+      const existingCard = await prisma.newsCard.findFirst({
         where: {
-          newsSourceId: source.id
+          sourceData: {
+            path: ['link'],
+            string_contains: article.link
+          }
         }
       });
 
-      if (!dataMapping) {
-        console.warn(`No data mapping found for source: ${source.id}`);
-        continue;
+      if (existingCard) {
+        continue; // Skip if already processed
       }
 
-      // Fetch latest news from this source
-      // For now, we'll use a generic fetch function
-      // In a real implementation, you would use the source config to determine how to fetch
-      const { fetchLatestNews } = await import('./news-fetcher');
-      const result = await fetchLatestNews();
+      // Generate a news card for this article using the default template
+      const cardResult = await generateNewsCardFromArticle(
+        article,
+        defaultTemplate.id
+      );
 
-      if (result.error) {
-        console.error(`Error fetching news from source ${source.id}:`, result.error);
-        continue;
-      }
-
-      // Process each article
-      for (const article of result.articles) {
-        // Check if this article has already been processed
-        const existingCard = await prisma.newsCard.findFirst({
-          where: {
-            sourceData: {
-              path: ['link'],
-              string_contains: article.link
-            }
-          }
-        });
-
-        if (existingCard) {
-          continue; // Skip if already processed
-        }
-
-        // Generate a news card for this article
-        const cardResult = await generateNewsCardFromArticle(
-          article,
-          dataMapping.templateId
-        );
-
-        if (!cardResult.success) {
-          console.error(`Error generating card for article ${article.title}:`, cardResult.error);
-        } else {
-          console.log(`Generated news card for article: ${article.title}`);
-        }
+      if (!cardResult.success) {
+        console.error(`Error generating card for article ${article.title}:`, cardResult.error);
+      } else {
+        console.log(`Generated news card for article: ${article.title}`);
       }
     }
   } catch (error) {

@@ -30,16 +30,15 @@ export async function POST(req: Request) {
         }
 
         // 1. Fetch Data
-        const source = await db.newsSource.findUnique({ where: { id: sourceId } })
         const template = await db.template.findUnique({ where: { id: templateId } })
-        const mapping = await db.dataMapping.findFirst({
-            where: { newsSourceId: sourceId, templateId: templateId }
-        })
         const socialAccount = await db.socialAccount.findUnique({ where: { id: targetSocialAccountId } })
 
-        if (!source || !template || !mapping || !socialAccount) {
+        if (!template || !socialAccount) {
             return NextResponse.json({ error: 'Resource not found' }, { status: 404 })
         }
+
+        // Use empty mapping since dataMapping model was removed
+        let mapping: { sourceFields: Record<string, string> } | null = null;
 
         // 2. We need the actual News Item. 
         // We don't store NewsItem in DB (only source config).
@@ -75,7 +74,6 @@ export async function POST(req: Request) {
                         status: 'QUEUED',
                         sourceData: newsItem,
                         templateId: template.id,
-                        dataMappingId: mapping.id,
                         posts: {
                             create: {
                                 socialAccountId: socialAccount.id,
@@ -94,7 +92,7 @@ export async function POST(req: Request) {
         // 3. Generate Image
         let imageBuffer = await generateCardImage({
             template: template,
-            mapping: mapping.sourceFields,
+            mapping: (mapping as any)?.sourceFields || {},
             newsItem: newsItem
         })
 
@@ -146,7 +144,6 @@ export async function POST(req: Request) {
                 status: 'POSTED',
                 sourceData: newsItem,
                 templateId: template.id,
-                dataMappingId: mapping.id,
                 posts: {
                     create: {
                         socialAccountId: socialAccount.id,

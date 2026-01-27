@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { chromium, Browser, Page } from 'playwright';
 import prisma from '@/lib/db';
 
 const NEWS_URL = 'https://www.bangladeshguardian.com/latest';
@@ -57,347 +56,38 @@ function sanitizeText(text: string): string {
   return sanitized;
 }
 
-function isProbablyLogo(url: string): boolean {
-  if (!url) return true;
-  const lowered = url.toLowerCase();
-  const bannedKeywords = ['logo', 'favicon', 'sprite', 'placeholder', 'default', 'avatar'];
-  return bannedKeywords.some(k => lowered.includes(k));
-}
-
-async function extractArticleDetails(page: Page, articleUrl: string): Promise<{
-  image: string | null;
-  content: string;
-  description: string;
-  author: string;
-  publishedAt: string;
-  category: string;
-}> {
-  try {
-    await page.goto(articleUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await page.waitForTimeout(3000);
-    
-    const details = await page.evaluate((url: string) => {
-      const result: {
-        image: string | null;
-        content: string;
-        description: string;
-        author: string;
-        publishedAt: string;
-        category: string;
-      } = {
-        image: null,
-        content: '',
-        description: '',
-        author: '',
-        publishedAt: '',
-        category: ''
-      };
-
-      // Image
-      const imgSelectors = [
-        'meta[property="og:image"]',
-        'meta[name="twitter:image"]',
-        'script[type="application/ld+json"]'
-      ];
-      
-      for (const selector of imgSelectors) {
-        if (result.image) break;
-        const el = document.querySelector(selector);
-        if (selector.includes('ld+json') && el) {
-          try {
-            const data = JSON.parse(el.textContent || '{}');
-            if (data.image) {
-              result.image = typeof data.image === 'string' ? data.image : data.image.url;
-            }
-            if (data.datePublished) result.publishedAt = data.datePublished;
-            if (data.author) result.author = typeof data.author === 'string' ? data.author : data.author.name || '';
-          } catch {}
-        } else if (el) {
-          const attr = el.getAttribute('content');
-          if (attr) result.image = attr;
-        }
-      }
-
-      // Description
-      const metaDesc = document.querySelector('meta[name="description"]')?.getAttribute('content');
-      if (metaDesc) result.description = metaDesc;
-      
-      const ogDesc = document.querySelector('meta[property="og:description"]')?.getAttribute('content');
-      if (ogDesc && !result.description) result.description = ogDesc;
-
-      // Published At
-      const pubDateMeta = document.querySelector('meta[property="article:published_time"]')?.getAttribute('content');
-      if (pubDateMeta) result.publishedAt = pubDateMeta;
-      
-      const timeEl = document.querySelector('time[datetime]');
-      if (timeEl && !result.publishedAt) {
-        result.publishedAt = timeEl.getAttribute('datetime') || '';
-      }
-
-      // Author
-      const authorMeta = document.querySelector('meta[name="author"]')?.getAttribute('content');
-      if (authorMeta) result.author = authorMeta;
-      
-      const authorEl = document.querySelector('[rel="author"], .author, .byline, .article-author, [class*="author"]');
-      if (authorEl && !result.author) {
-        result.author = authorEl.textContent?.trim() || '';
-      }
-
-      // Category - from URL path
-      const urlParts = url.split('/');
-      const possibleCategory = urlParts[urlParts.length - 2];
-      const validCategories = ['national', 'international', 'country', 'sports', 'politics', 'business', 'entertainment', 'technology', 'opinion', 'fact-check', 'law-court'];
-      if (validCategories.includes(possibleCategory)) {
-        result.category = possibleCategory.charAt(0).toUpperCase() + possibleCategory.slice(1);
-      }
-
-      // Content
-      const allParagraphs = document.querySelectorAll('p');
-      const contentParts: string[] = [];
-      allParagraphs.forEach((p) => {
-        const text = p.textContent?.trim() || '';
-        if (text.length > 50 && 
-            !text.toLowerCase().includes('advertisement') &&
-            !text.toLowerCase().includes('subscribe') &&
-            !text.toLowerCase().includes('copyright') &&
-            !text.toLowerCase().includes('follow us') &&
-            !text.toLowerCase().includes('share this') &&
-            !text.toLowerCase().includes('related') &&
-            !text.toLowerCase().includes('loading')) {
-          contentParts.push(text);
-        }
-      });
-      
-      result.content = contentParts.join('\n\n');
-
-      if (!result.content || result.content.length < 100) {
-        const allTextElements = document.querySelectorAll('div, section, article, main');
-        const textChunks: string[] = [];
-        allTextElements.forEach((el) => {
-          const text = el.textContent?.trim() || '';
-          if (text.length > 100 && text.length < 2000 && !text.includes('Loading')) {
-            textChunks.push(text);
-          }
-        });
-        if (textChunks.length > 0) {
-          textChunks.sort((a, b) => b.length - a.length);
-          result.content = textChunks[0];
-        }
-      }
-
-      if (!result.content && result.description) {
-        result.content = result.description;
-      }
-
-      return result;
-    }, articleUrl);
-
-    if (details.image && !isProbablyLogo(details.image)) {
-      try {
-        details.image = new URL(details.image, articleUrl).href;
-      } catch {
-        details.image = null;
-      }
-    } else {
-      details.image = null;
-    }
-
-    return details;
-  } catch (error) {
-    console.error(`Error extracting details from ${articleUrl}:`, error);
-    return {
-      image: null,
-      content: '',
-      description: '',
-      author: '',
-      publishedAt: '',
-      category: ''
-    };
-  }
-}
 
 export async function GET() {
-  let browser: Browser | null = null;
-  
+  console.log('🔍 Checking for latest news from Bangladesh Guardian...');
+
+  // Get already posted links from database
+  const postedLinks = await prisma.postedLink.findMany({
+    where: { source: 'bangladesh_guardian' },
+    select: { url: true }
+  });
+
+  const postedUrls = new Set(postedLinks.map(p => p.url));
+  console.log(`📋 Found ${postedUrls.size} previously posted links`);
+
+  // Use the working agent directly instead of Playwright
+  console.log('🔄 Using the working bangladesh-guardian-agent...');
   try {
-    console.log('🔍 Checking for latest news from Bangladesh Guardian...');
-    
-    // Get already posted links from database
-    const postedLinks = await prisma.postedLink.findMany({
-      where: { source: 'bangladesh_guardian' },
-      select: { url: true }
-    });
-    
-    const postedUrls = new Set(postedLinks.map(p => p.url));
-    console.log(`📋 Found ${postedUrls.size} previously posted links`);
-    
-    browser = await chromium.launch({ 
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ]
-    });
-    const page = await browser.newPage();
-    
-    // Set user agent and additional headers
-    await page.route('**/*', (route) => {
-      const headers = {
-        ...route.request().headers(),
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      };
-      route.continue({ headers });
-    });
-    
-    console.log(`🌐 Navigating to ${NEWS_URL}...`);
-    
-    try {
-      await page.goto(NEWS_URL, { 
-        waitUntil: 'domcontentloaded', 
-        timeout: 45000 
-      });
-      console.log('✅ Page loaded successfully');
-    } catch (error) {
-      console.error('❌ Failed to load page with Playwright:', error);
-      await browser.close();
-      
-      // Fallback: Try using the bangladesh-guardian-agent
-      console.log('🔄 Trying fallback method with bangladesh-guardian-agent...');
-      try {
-        const { getLatestNews } = await import('@/lib/bangladesh-guardian-agent');
-        const newsItems = await getLatestNews();
-        
-        console.log(`✅ Fallback successful: Found ${newsItems.length} articles`);
-        
-        // Convert to expected format
-        const articles = newsItems.map(item => ({
-          title: item.title,
-          link: item.link
-        }));
-        
-        // Filter out already posted articles
-        const newArticles = articles.filter(a => !postedUrls.has(a.link));
-        console.log(`🆕 ${newArticles.length} new articles (not yet posted)`);
-        
-        if (newArticles.length === 0) {
-          return NextResponse.json({
-            success: true,
-            message: 'No new articles',
-            count: 0,
-            articles: []
-          });
-        }
+    const { getLatestNews } = await import('@/lib/bangladesh-guardian-agent');
+    const newsItems = await getLatestNews();
 
-        // Process articles (simplified for fallback)
-        const processedArticles: ProcessedArticle[] = [];
-        
-        for (const article of newArticles.slice(0, 5)) {
-          const newsItem = newsItems.find(item => item.link === article.link);
-          if (newsItem) {
-            processedArticles.push({
-              title: article.title,
-              sanitizedTitle: sanitizeText(article.title),
-              link: article.link,
-              image: newsItem.image || null,
-              content: newsItem.description || '',
-              description: newsItem.description || '',
-              author: '', // NewsItem doesn't have author
-              publishedAt: newsItem.date || new Date().toISOString(),
-              category: 'news', // NewsItem doesn't have category
-              isNew: true
-            });
-          }
-        }
+    console.log(`✅ Successfully found ${newsItems.length} articles`);
 
-        await browser.close();
-        return NextResponse.json({
-          success: true,
-          message: `Found ${processedArticles.length} new articles (fallback method)`,
-          count: processedArticles.length,
-          articles: processedArticles
-        });
-        
-      } catch (fallbackError) {
-        console.error('❌ Fallback method also failed:', fallbackError);
-        return NextResponse.json({
-          success: false,
-          error: 'Both Playwright and fallback methods failed to access Bangladesh Guardian.',
-          details: {
-            playwright: (error as Error).message,
-            fallback: (fallbackError as Error).message
-          }
-        }, { status: 500 });
-      }
-    }
-    
-    // Wait a bit for dynamic content
-    await page.waitForTimeout(2000);
-    
-    const articles: Article[] = await page.evaluate(() => {
-      const results: Article[] = [];
-      const seenUrls = new Set<string>();
-      
-      console.log('Looking for articles with specific selectors...');
-      
-      // Use the same selectors as the bangladesh-guardian-agent
-      const selectors = [
-        'article a[href]',
-        'h2 a[href]',
-        'h3 a[href]',
-        '.post-title a[href]',
-        '.entry-title a[href]',
-        '.article-title a[href]',
-        '.news-item a[href]'
-      ];
+    // Convert to expected format
+    const articles = newsItems.map(item => ({
+      title: item.title,
+      link: item.link
+    }));
 
-      for (const selector of selectors) {
-        const links = document.querySelectorAll(selector);
-        console.log(`Found ${links.length} links with selector: ${selector}`);
-        
-        links.forEach((link) => {
-          const href = (link as HTMLAnchorElement).href;
-          const text = link.textContent?.trim();
-          
-          if (href.includes('bangladeshguardian.com') && 
-              /\/\d+/.test(href) && // Contains numbers (article ID)
-              !href.includes('/latest') &&
-              !href.includes('/category') &&
-              !href.includes('/search') &&
-              !href.includes('/page') &&
-              text && 
-              text.length > 15 &&
-              text.length < 200 &&
-              !seenUrls.has(href)) {
-            
-            seenUrls.add(href);
-            results.push({ title: text, link: href });
-            console.log('Added article:', text.substring(0, 50));
-          }
-        });
-      }
-      
-      return results;
-    });
-    
-    console.log(`📰 Found ${articles.length} articles on page`);
-    
     // Filter out already posted articles
     const newArticles = articles.filter(a => !postedUrls.has(a.link));
     console.log(`🆕 ${newArticles.length} new articles (not yet posted)`);
-    
+
     if (newArticles.length === 0) {
-      await browser.close();
       return NextResponse.json({
         success: true,
         message: 'No new articles',
@@ -405,58 +95,50 @@ export async function GET() {
         articles: []
       });
     }
-    
-    // Extract details for new articles
+
+    // Process articles (simplified for fallback)
     const processedArticles: ProcessedArticle[] = [];
-    
+
     for (const article of newArticles) {
-      console.log(`📄 Extracting: ${article.title.substring(0, 40)}...`);
-      
-      const details = await extractArticleDetails(page, article.link);
-      
-      // Save to database as posted
-      const savedLink = await prisma.postedLink.create({
-        data: {
-          url: article.link,
+      const newsItem = newsItems.find(item => item.link === article.link);
+      if (newsItem) {
+        // Save to database as posted
+        const savedLink = await prisma.postedLink.create({
+          data: {
+            url: article.link,
+            title: article.title,
+            source: 'bangladesh_guardian'
+          }
+        });
+
+        processedArticles.push({
+          id: savedLink.id,
           title: article.title,
-          source: 'bangladesh_guardian'
-        }
-      });
-      
-      processedArticles.push({
-        id: savedLink.id,
-        title: article.title,
-        sanitizedTitle: sanitizeText(article.title),
-        link: article.link,
-        image: details.image,
-        content: sanitizeText(details.content),
-        description: sanitizeText(details.description),
-        author: details.author,
-        publishedAt: details.publishedAt,
-        category: details.category,
-        isNew: true
-      });
-      
-      // Small delay between processing to avoid overwhelming
-      await page.waitForTimeout(500);
+          sanitizedTitle: sanitizeText(article.title),
+          link: article.link,
+          image: newsItem.image || null,
+          content: sanitizeText(newsItem.description || ''),
+          description: sanitizeText(newsItem.description || ''),
+          author: '', // NewsItem doesn't have author
+          publishedAt: newsItem.date || new Date().toISOString(),
+          category: 'news', // Default category
+          isNew: true
+        });
+      }
     }
-    
-    await browser.close();
-    
+
     return NextResponse.json({
       success: true,
-      message: `Posted ${processedArticles.length} new article(s)`,
+      message: `Found ${processedArticles.length} new articles`,
       count: processedArticles.length,
       articles: processedArticles
     });
-    
+
   } catch (error) {
-    console.error('❌ Error fetching news:', error);
-    if (browser) await browser.close();
-    
+    console.error('❌ Bangladesh Guardian agent failed:', error);
     return NextResponse.json({
       success: false,
-      error: 'Failed to fetch news',
+      error: 'Failed to fetch news from Bangladesh Guardian',
       articles: []
     }, { status: 500 });
   }

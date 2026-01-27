@@ -32,8 +32,7 @@ export async function POST(request: Request) {
         imageUrl,
         status: 'GENERATED',
         sourceData: article,
-        templateId: template.id,
-        dataMappingId: null
+        templateId: template.id
       }
     })
 
