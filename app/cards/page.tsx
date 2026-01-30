@@ -230,6 +230,7 @@ function createCustomPreview(article: Article, template: Template, fonts: Font[]
           width: ${rectWidth}px;
           height: ${rectHeight}px;
           object-fit: cover;
+          border-radius: ${(obj.rx || 0) > 0 ? `${obj.rx * (obj.scaleX || 1)}px` : '0'};
         `
         // Use proxy to bypass CORS issues
         img.src = `/api/image-proxy?url=${encodeURIComponent(article.image)}`
@@ -523,6 +524,17 @@ export default function CardsPage() {
       const isKonvaFormat = Array.isArray(templateData.elements);
 
       if (isKonvaFormat) {
+        // Define width and height for Konva format
+        let width, height;
+        if (templateData.width !== undefined && templateData.height !== undefined) {
+          width = templateData.width;
+          height = templateData.height;
+        } else {
+          // Fallback dimensions
+          width = 1200;
+          height = 630;
+        }
+
         // Use the new Konva-based API for generation
         // Create a temporary container for capturing at full size
         const captureContainer = document.createElement('div')
@@ -854,6 +866,7 @@ export default function CardsPage() {
                     width: rectWidth,
                     height: rectHeight,
                     objectFit: 'cover',
+                    borderRadius: (obj.rx || 0) > 0 ? `${obj.rx * (obj.scaleX || 1)}px` : '0',
                   }}
                 />
               )

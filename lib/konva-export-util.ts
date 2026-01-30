@@ -2,6 +2,24 @@ import { HTMLOnlyTemplate, TemplateElement, DynamicField } from '@/components/ht
 import { createCanvas, loadImage, registerFont } from 'canvas';
 import * as fs from 'fs';
 
+/**
+ * Draws a rounded rectangle using the canvas API
+ */
+function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+  ctx.fill();
+}
+
 interface GenerateCardOptions {
   template: HTMLOnlyTemplate;
   newsItem: any; // The news data to populate the template
@@ -111,9 +129,21 @@ export async function generateCardImage({ template, newsItem }: GenerateCardOpti
         }
       }
       else if (element.type === 'rect') {
-        // Draw a regular rectangle
-        ctx.fillStyle = element.fill || '#000000';
-        ctx.fillRect(element.x, element.y, element.width || 0, element.height || 0);
+        // Draw a rectangle with optional border radius
+        const x = element.x;
+        const y = element.y;
+        const width = element.width || 0;
+        const height = element.height || 0;
+        const radius = element.rx || 0; // Use rx for border radius
+
+        if (radius > 0) {
+          // Draw a rounded rectangle
+          drawRoundedRect(ctx, x, y, width, height, radius);
+        } else {
+          // Draw a regular rectangle
+          ctx.fillStyle = element.fill || '#000000';
+          ctx.fillRect(x, y, width, height);
+        }
       }
     } else {
       // Static elements (not dynamic)
@@ -132,8 +162,20 @@ export async function generateCardImage({ template, newsItem }: GenerateCardOpti
         ctx.restore();
       }
       else if (element.type === 'rect') {
-        ctx.fillStyle = element.fill || '#000000';
-        ctx.fillRect(element.x, element.y, element.width || 0, element.height || 0);
+        const x = element.x;
+        const y = element.y;
+        const width = element.width || 0;
+        const height = element.height || 0;
+        const radius = element.rx || 0; // Use rx for border radius
+
+        if (radius > 0) {
+          // Draw a rounded rectangle
+          drawRoundedRect(ctx, x, y, width, height, radius);
+        } else {
+          // Draw a regular rectangle
+          ctx.fillStyle = element.fill || '#000000';
+          ctx.fillRect(x, y, width, height);
+        }
       }
     }
   }
