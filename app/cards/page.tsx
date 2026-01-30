@@ -109,20 +109,26 @@ function createCustomPreview(article: Article, template: Template, fonts: Font[]
 
   // Add background image if exists
   if (backgroundImage?.src) {
-    // Check if the image URL is external and needs proxying
+    // Check if it's a data URL (starts with 'data:')
     let bgImageUrl = backgroundImage.src;
-    try {
-      const urlObj = new URL(backgroundImage.src);
-      // If the image is from an external domain, use the proxy
-      if (urlObj.hostname !== window.location.hostname &&
-          urlObj.hostname !== 'localhost' &&
-          !urlObj.hostname.endsWith('vercel.app') &&
-          !urlObj.hostname.endsWith('newsagent.com')) {
+    if (backgroundImage.src.startsWith('data:')) {
+      // For data URLs, use directly without proxy
+      bgImageUrl = backgroundImage.src;
+    } else {
+      // For regular URLs, check if external and needs proxying
+      try {
+        const urlObj = new URL(backgroundImage.src);
+        // If the image is from an external domain, use the proxy
+        if (urlObj.hostname !== window.location.hostname &&
+            urlObj.hostname !== 'localhost' &&
+            !urlObj.hostname.endsWith('vercel.app') &&
+            !urlObj.hostname.endsWith('newsagent.com')) {
+          bgImageUrl = `/api/image-proxy?url=${encodeURIComponent(backgroundImage.src)}`;
+        }
+      } catch (e) {
+        // If URL parsing fails, treat as external and use proxy
         bgImageUrl = `/api/image-proxy?url=${encodeURIComponent(backgroundImage.src)}`;
       }
-    } catch (e) {
-      // If URL parsing fails, treat as external and use proxy
-      bgImageUrl = `/api/image-proxy?url=${encodeURIComponent(backgroundImage.src)}`;
     }
 
     container.style.backgroundImage = `url(${bgImageUrl})`
@@ -295,8 +301,16 @@ function createCustomPreview(article: Article, template: Template, fonts: Font[]
           height: ${imgHeight}px;
           object-fit: cover;
         `
-        // Use proxy to bypass CORS issues
-        img.src = `/api/image-proxy?url=${encodeURIComponent(imageSrc)}`
+
+        // Check if it's a data URL (starts with 'data:')
+        if (imageSrc.startsWith('data:')) {
+          // For data URLs, use directly without proxy
+          img.src = imageSrc;
+        } else {
+          // Use proxy to bypass CORS issues
+          img.src = `/api/image-proxy?url=${encodeURIComponent(imageSrc)}`
+        }
+
         img.alt = "Canvas image"
         container.appendChild(img)
       } else {
@@ -694,20 +708,26 @@ export default function CardsPage() {
     }
 
     if (backgroundImage?.src) {
-      // Check if the image URL is external and needs proxying
+      // Check if it's a data URL (starts with 'data:')
       let bgImageUrl = backgroundImage.src;
-      try {
-        const urlObj = new URL(backgroundImage.src);
-        // If the image is from an external domain, use the proxy
-        if (urlObj.hostname !== window.location.hostname &&
-            urlObj.hostname !== 'localhost' &&
-            !urlObj.hostname.endsWith('vercel.app') &&
-            !urlObj.hostname.endsWith('newsagent.com')) {
+      if (backgroundImage.src.startsWith('data:')) {
+        // For data URLs, use directly without proxy
+        bgImageUrl = backgroundImage.src;
+      } else {
+        // For regular URLs, check if external and needs proxying
+        try {
+          const urlObj = new URL(backgroundImage.src);
+          // If the image is from an external domain, use the proxy
+          if (urlObj.hostname !== window.location.hostname &&
+              urlObj.hostname !== 'localhost' &&
+              !urlObj.hostname.endsWith('vercel.app') &&
+              !urlObj.hostname.endsWith('newsagent.com')) {
+            bgImageUrl = `/api/image-proxy?url=${encodeURIComponent(backgroundImage.src)}`;
+          }
+        } catch (e) {
+          // If URL parsing fails, treat as external and use proxy
           bgImageUrl = `/api/image-proxy?url=${encodeURIComponent(backgroundImage.src)}`;
         }
-      } catch (e) {
-        // If URL parsing fails, treat as external and use proxy
-        bgImageUrl = `/api/image-proxy?url=${encodeURIComponent(backgroundImage.src)}`;
       }
 
       bgStyle.backgroundImage = `url(${bgImageUrl})`
@@ -799,20 +819,26 @@ export default function CardsPage() {
             const rectHeight = (obj.height || 100) * (obj.scaleY || 1)
             
             if (dynamicField === 'image' && article.image) {
-              // Check if the image URL is external and needs proxying
+              // Check if it's a data URL (starts with 'data:')
               let imageUrl = article.image;
-              try {
-                const urlObj = new URL(article.image);
-                // If the image is from an external domain, use the proxy
-                if (urlObj.hostname !== window.location.hostname &&
-                    urlObj.hostname !== 'localhost' &&
-                    !urlObj.hostname.endsWith('vercel.app') &&
-                    !urlObj.hostname.endsWith('newsagent.com')) {
+              if (article.image.startsWith('data:')) {
+                // For data URLs, use directly without proxy
+                imageUrl = article.image;
+              } else {
+                // For regular URLs, check if external and needs proxying
+                try {
+                  const urlObj = new URL(article.image);
+                  // If the image is from an external domain, use the proxy
+                  if (urlObj.hostname !== window.location.hostname &&
+                      urlObj.hostname !== 'localhost' &&
+                      !urlObj.hostname.endsWith('vercel.app') &&
+                      !urlObj.hostname.endsWith('newsagent.com')) {
+                    imageUrl = `/api/image-proxy?url=${encodeURIComponent(article.image)}`;
+                  }
+                } catch (e) {
+                  // If URL parsing fails, treat as external and use proxy
                   imageUrl = `/api/image-proxy?url=${encodeURIComponent(article.image)}`;
                 }
-              } catch (e) {
-                // If URL parsing fails, treat as external and use proxy
-                imageUrl = `/api/image-proxy?url=${encodeURIComponent(article.image)}`;
               }
 
               return (
@@ -854,20 +880,26 @@ export default function CardsPage() {
             const radius = (obj.radius || 25) * (obj.scaleX || 1)
             
             if (dynamicField === 'image' && article.image) {
-              // Check if the image URL is external and needs proxying
+              // Check if it's a data URL (starts with 'data:')
               let imageUrl = article.image;
-              try {
-                const urlObj = new URL(article.image);
-                // If the image is from an external domain, use the proxy
-                if (urlObj.hostname !== window.location.hostname &&
-                    urlObj.hostname !== 'localhost' &&
-                    !urlObj.hostname.endsWith('vercel.app') &&
-                    !urlObj.hostname.endsWith('newsagent.com')) {
+              if (article.image.startsWith('data:')) {
+                // For data URLs, use directly without proxy
+                imageUrl = article.image;
+              } else {
+                // For regular URLs, check if external and needs proxying
+                try {
+                  const urlObj = new URL(article.image);
+                  // If the image is from an external domain, use the proxy
+                  if (urlObj.hostname !== window.location.hostname &&
+                      urlObj.hostname !== 'localhost' &&
+                      !urlObj.hostname.endsWith('vercel.app') &&
+                      !urlObj.hostname.endsWith('newsagent.com')) {
+                    imageUrl = `/api/image-proxy?url=${encodeURIComponent(article.image)}`;
+                  }
+                } catch (e) {
+                  // If URL parsing fails, treat as external and use proxy
                   imageUrl = `/api/image-proxy?url=${encodeURIComponent(article.image)}`;
                 }
-              } catch (e) {
-                // If URL parsing fails, treat as external and use proxy
-                imageUrl = `/api/image-proxy?url=${encodeURIComponent(article.image)}`;
               }
 
               return (

@@ -173,27 +173,71 @@ export function CanvasEditor({
                         // Restore image objects from saved src
                         if ((objType === 'image' || objType === 'fabric-image') && data.objects[index]._imageSrc) {
                             const src = data.objects[index]._imageSrc
-                            console.log('[CanvasEditor] Restoring image from src:', src.substring(0, 100))
-                            try {
-                                const newImg = await fabric.FabricImage.fromURL(src)
-                                // Check again if canvas is still valid after async operation
-                                if (!canvas.contextContainer || (canvas as any).cancelRequested) return;
 
-                                const origObj = obj as fabric.FabricImage
-                                newImg.set({
-                                    left: origObj.left,
-                                    top: origObj.top,
-                                    scaleX: origObj.scaleX,
-                                    scaleY: origObj.scaleY,
-                                    angle: origObj.angle,
-                                    originX: origObj.originX,
-                                    originY: origObj.originY,
-                                })
-                                canvas.remove(origObj)
-                                canvas.add(newImg)
-                                if (canvas.contextContainer && !(canvas as any).cancelRequested) canvas.renderAll()
-                            } catch (err) {
-                                console.error('[CanvasEditor] Error restoring image:', err)
+                            // Check if it's a data URL (starts with 'data:')
+                            if (src.startsWith('data:')) {
+                                // For data URLs, use directly without proxy
+                                console.log('[CanvasEditor] Restoring image from src:', src.substring(0, 100))
+                                try {
+                                    const newImg = await fabric.FabricImage.fromURL(src)
+                                    // Check again if canvas is still valid after async operation
+                                    if (!canvas.contextContainer || (canvas as any).cancelRequested) return;
+
+                                    const origObj = obj as fabric.FabricImage
+                                    newImg.set({
+                                        left: origObj.left,
+                                        top: origObj.top,
+                                        scaleX: origObj.scaleX,
+                                        scaleY: origObj.scaleY,
+                                        angle: origObj.angle,
+                                        originX: origObj.originX,
+                                        originY: origObj.originY,
+                                    })
+                                    canvas.remove(origObj)
+                                    canvas.add(newImg)
+                                    if (canvas.contextContainer && !(canvas as any).cancelRequested) canvas.renderAll()
+                                } catch (err) {
+                                    console.error('[CanvasEditor] Error restoring image:', err)
+                                }
+                            } else {
+                                // For regular URLs, check if external and needs proxying
+                                let imageSrc = src;
+                                try {
+                                    const urlObj = new URL(src);
+                                    // If the image is from an external domain, use the proxy
+                                    if (urlObj.hostname !== window.location.hostname &&
+                                        urlObj.hostname !== 'localhost' &&
+                                        !urlObj.hostname.endsWith('vercel.app') &&
+                                        !urlObj.hostname.endsWith('newsagent.com')) {
+                                        imageSrc = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(src)}`;
+                                    }
+                                } catch (e) {
+                                    // If URL parsing fails, treat as external and use proxy
+                                    imageSrc = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(src)}`;
+                                }
+
+                                console.log('[CanvasEditor] Restoring image from src:', imageSrc.substring(0, 100))
+                                try {
+                                    const newImg = await fabric.FabricImage.fromURL(imageSrc)
+                                    // Check again if canvas is still valid after async operation
+                                    if (!canvas.contextContainer || (canvas as any).cancelRequested) return;
+
+                                    const origObj = obj as fabric.FabricImage
+                                    newImg.set({
+                                        left: origObj.left,
+                                        top: origObj.top,
+                                        scaleX: origObj.scaleX,
+                                        scaleY: origObj.scaleY,
+                                        angle: origObj.angle,
+                                        originX: origObj.originX,
+                                        originY: origObj.originY,
+                                    })
+                                    canvas.remove(origObj)
+                                    canvas.add(newImg)
+                                    if (canvas.contextContainer && !(canvas as any).cancelRequested) canvas.renderAll()
+                                } catch (err) {
+                                    console.error('[CanvasEditor] Error restoring image:', err)
+                                }
                             }
                         }
                     }
@@ -347,87 +391,141 @@ export function useCanvas() {
 
     const addImage = (url: string) => {
         waitForCanvas((canvas) => {
-            // Check if the image URL is external and needs proxying
-            let imageUrl = url;
-            try {
-                const urlObj = new URL(url);
-                // If the image is from an external domain, use the proxy
-                if (urlObj.hostname !== window.location.hostname &&
-                    urlObj.hostname !== 'localhost' &&
-                    !urlObj.hostname.endsWith('vercel.app') &&
-                    !urlObj.hostname.endsWith('newsagent.com')) {
+            // Check if it's a data URL (starts with 'data:')
+            if (url.startsWith('data:')) {
+                // For data URLs, use directly without proxy
+                fabric.FabricImage.fromURL(url).then((img: fabric.FabricImage) => {
+                    img.scale(0.5)
+                    img.set({
+                        left: 100,
+                        top: 100,
+                        dynamicField: 'none',
+                    })
+                    canvas.add(img)
+                    canvas.setActiveObject(img)
+                    canvas.renderAll()
+                })
+            } else {
+                // For regular URLs, check if external and needs proxying
+                let imageUrl = url;
+                try {
+                    const urlObj = new URL(url);
+                    // If the image is from an external domain, use the proxy
+                    if (urlObj.hostname !== window.location.hostname &&
+                        urlObj.hostname !== 'localhost' &&
+                        !urlObj.hostname.endsWith('vercel.app') &&
+                        !urlObj.hostname.endsWith('newsagent.com')) {
+                        imageUrl = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(url)}`;
+                    }
+                } catch (e) {
+                    // If URL parsing fails, treat as external and use proxy
                     imageUrl = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(url)}`;
                 }
-            } catch (e) {
-                // If URL parsing fails, treat as external and use proxy
-                imageUrl = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(url)}`;
-            }
 
-            fabric.FabricImage.fromURL(imageUrl).then((img: fabric.FabricImage) => {
-                img.scale(0.5)
-                img.set({
-                    left: 100,
-                    top: 100,
-                    dynamicField: 'none',
+                fabric.FabricImage.fromURL(imageUrl).then((img: fabric.FabricImage) => {
+                    img.scale(0.5)
+                    img.set({
+                        left: 100,
+                        top: 100,
+                        dynamicField: 'none',
+                    })
+                    canvas.add(img)
+                    canvas.setActiveObject(img)
+                    canvas.renderAll()
                 })
-                canvas.add(img)
-                canvas.setActiveObject(img)
-                canvas.renderAll()
-            })
+            }
         })
     }
 
     const setBackgroundImage = (url: string) => {
         waitForCanvas((canvas) => {
-            // Check if the image URL is external and needs proxying
-            let imageUrl = url;
-            try {
-                const urlObj = new URL(url);
-                // If the image is from an external domain, use the proxy
-                if (urlObj.hostname !== window.location.hostname &&
-                    urlObj.hostname !== 'localhost' &&
-                    !urlObj.hostname.endsWith('vercel.app') &&
-                    !urlObj.hostname.endsWith('newsagent.com')) {
+            // Check if it's a data URL (starts with 'data:')
+            if (url.startsWith('data:')) {
+                // For data URLs, use directly without proxy
+                fabric.FabricImage.fromURL(url).then((img: fabric.FabricImage) => {
+                    const canvasWidth = canvas.width || 1200
+                    const canvasHeight = canvas.height || 630
+
+                    // Calculate scale to cover entire canvas (like CSS background-size: cover)
+                    const scaleX = canvasWidth / img.width!
+                    const scaleY = canvasHeight / img.height!
+                    const scale = Math.max(scaleX, scaleY)
+
+                    // Calculate position to center the image
+                    const scaledWidth = img.width! * scale;
+                    const scaledHeight = img.height! * scale;
+                    const left = (canvasWidth - scaledWidth) / 2;
+                    const top = (canvasHeight - scaledHeight) / 2;
+
+                    // Use the proper Fabric.js method to set background image
+                    canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
+                        scaleX: scale,
+                        scaleY: scale,
+                        left: left,
+                        top: top,
+                        originX: 'left',
+                        originY: 'top',
+                    });
+
+                    console.log('[CanvasEditor] Background image set:', {
+                        originalSize: `${img.width}x${img.height}`,
+                        scaledSize: `${scaledWidth.toFixed(0)}x${scaledHeight.toFixed(0)}`,
+                        scale: scale.toFixed(2)
+                    });
+                }).catch((error: Error) => {
+                    console.error('[CanvasEditor] Error loading background image:', error)
+                })
+            } else {
+                // For regular URLs, check if external and needs proxying
+                let imageUrl = url;
+                try {
+                    const urlObj = new URL(url);
+                    // If the image is from an external domain, use the proxy
+                    if (urlObj.hostname !== window.location.hostname &&
+                        urlObj.hostname !== 'localhost' &&
+                        !urlObj.hostname.endsWith('vercel.app') &&
+                        !urlObj.hostname.endsWith('newsagent.com')) {
+                        imageUrl = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(url)}`;
+                    }
+                } catch (e) {
+                    // If URL parsing fails, treat as external and use proxy
                     imageUrl = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(url)}`;
                 }
-            } catch (e) {
-                // If URL parsing fails, treat as external and use proxy
-                imageUrl = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(url)}`;
+
+                fabric.FabricImage.fromURL(imageUrl).then((img: fabric.FabricImage) => {
+                    const canvasWidth = canvas.width || 1200
+                    const canvasHeight = canvas.height || 630
+
+                    // Calculate scale to cover entire canvas (like CSS background-size: cover)
+                    const scaleX = canvasWidth / img.width!
+                    const scaleY = canvasHeight / img.height!
+                    const scale = Math.max(scaleX, scaleY)
+
+                    // Calculate position to center the image
+                    const scaledWidth = img.width! * scale;
+                    const scaledHeight = img.height! * scale;
+                    const left = (canvasWidth - scaledWidth) / 2;
+                    const top = (canvasHeight - scaledHeight) / 2;
+
+                    // Use the proper Fabric.js method to set background image
+                    canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
+                        scaleX: scale,
+                        scaleY: scale,
+                        left: left,
+                        top: top,
+                        originX: 'left',
+                        originY: 'top',
+                    });
+
+                    console.log('[CanvasEditor] Background image set:', {
+                        originalSize: `${img.width}x${img.height}`,
+                        scaledSize: `${scaledWidth.toFixed(0)}x${scaledHeight.toFixed(0)}`,
+                        scale: scale.toFixed(2)
+                    });
+                }).catch((error: Error) => {
+                    console.error('[CanvasEditor] Error loading background image:', error)
+                })
             }
-
-            fabric.FabricImage.fromURL(imageUrl).then((img: fabric.FabricImage) => {
-                const canvasWidth = canvas.width || 1200
-                const canvasHeight = canvas.height || 630
-
-                // Calculate scale to cover entire canvas (like CSS background-size: cover)
-                const scaleX = canvasWidth / img.width!
-                const scaleY = canvasHeight / img.height!
-                const scale = Math.max(scaleX, scaleY)
-
-                // Calculate position to center the image
-                const scaledWidth = img.width! * scale;
-                const scaledHeight = img.height! * scale;
-                const left = (canvasWidth - scaledWidth) / 2;
-                const top = (canvasHeight - scaledHeight) / 2;
-
-                // Use the proper Fabric.js method to set background image
-                canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
-                    scaleX: scale,
-                    scaleY: scale,
-                    left: left,
-                    top: top,
-                    originX: 'left',
-                    originY: 'top',
-                });
-
-                console.log('[CanvasEditor] Background image set:', {
-                    originalSize: `${img.width}x${img.height}`,
-                    scaledSize: `${scaledWidth.toFixed(0)}x${scaledHeight.toFixed(0)}`,
-                    scale: scale.toFixed(2)
-                });
-            }).catch((error: Error) => {
-                console.error('[CanvasEditor] Error loading background image:', error)
-            })
         })
     }
 
@@ -756,28 +854,65 @@ export function useCanvas() {
                         // Restore image objects from saved src
                         if ((objType === 'image' || objType === 'fabric-image') && jsonData.objects[index]._imageSrc) {
                             const src = jsonData.objects[index]._imageSrc
-                            console.log('[CanvasEditor] Restoring image from src:', src.substring(0, 100))
 
-                            // Use proxy to bypass CORS issues
-                            const proxyImageUrl = `/api/image-proxy?url=${encodeURIComponent(src)}`
+                            // Check if it's a data URL (starts with 'data:')
+                            if (src.startsWith('data:')) {
+                                // For data URLs, use directly without proxy
+                                console.log('[CanvasEditor] Restoring image from src:', src.substring(0, 100))
+                                try {
+                                    const newImg = await fabric.FabricImage.fromURL(src)
+                                    const origObj = obj as fabric.FabricImage
+                                    newImg.set({
+                                        left: origObj.left,
+                                        top: origObj.top,
+                                        scaleX: origObj.scaleX,
+                                        scaleY: origObj.scaleY,
+                                        angle: origObj.angle,
+                                        originX: origObj.originX,
+                                        originY: origObj.originY,
+                                    })
+                                    // Replace the object
+                                    canvas.remove(origObj)
+                                    canvas.add(newImg)
+                                } catch (err) {
+                                    console.error('[CanvasEditor] Error restoring image:', err)
+                                }
+                            } else {
+                                // For regular URLs, check if external and needs proxying
+                                let imageSrc = src;
+                                try {
+                                    const urlObj = new URL(src);
+                                    // If the image is from an external domain, use the proxy
+                                    if (urlObj.hostname !== window.location.hostname &&
+                                        urlObj.hostname !== 'localhost' &&
+                                        !urlObj.hostname.endsWith('vercel.app') &&
+                                        !urlObj.hostname.endsWith('newsagent.com')) {
+                                        imageSrc = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(src)}`;
+                                    }
+                                } catch (e) {
+                                    // If URL parsing fails, treat as external and use proxy
+                                    imageSrc = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(src)}`;
+                                }
 
-                            try {
-                                const newImg = await fabric.FabricImage.fromURL(proxyImageUrl)
-                                const origObj = obj as fabric.FabricImage
-                                newImg.set({
-                                    left: origObj.left,
-                                    top: origObj.top,
-                                    scaleX: origObj.scaleX,
-                                    scaleY: origObj.scaleY,
-                                    angle: origObj.angle,
-                                    originX: origObj.originX,
-                                    originY: origObj.originY,
-                                })
-                                // Replace the object
-                                canvas.remove(origObj)
-                                canvas.add(newImg)
-                            } catch (err) {
-                                console.error('[CanvasEditor] Error restoring image:', err)
+                                console.log('[CanvasEditor] Restoring image from src:', imageSrc.substring(0, 100))
+                                try {
+                                    const newImg = await fabric.FabricImage.fromURL(imageSrc)
+                                    const origObj = obj as fabric.FabricImage
+                                    newImg.set({
+                                        left: origObj.left,
+                                        top: origObj.top,
+                                        scaleX: origObj.scaleX,
+                                        scaleY: origObj.scaleY,
+                                        angle: origObj.angle,
+                                        originX: origObj.originX,
+                                        originY: origObj.originY,
+                                    })
+                                    // Replace the object
+                                    canvas.remove(origObj)
+                                    canvas.add(newImg)
+                                } catch (err) {
+                                    console.error('[CanvasEditor] Error restoring image:', err)
+                                }
                             }
                         }
                     }
@@ -838,44 +973,71 @@ export function useCanvas() {
                         }
                     } else if (obj.type === 'rect' || obj.type === 'circle') {
                         if (dynamicField === 'image' && data.image) {
-                            // Check if the image URL is external and needs proxying
-                            let imageUrl = data.image;
-                            try {
-                                const urlObj = new URL(data.image);
-                                // If the image is from an external domain, use the proxy
-                                if (urlObj.hostname !== window.location.hostname &&
-                                    urlObj.hostname !== 'localhost' &&
-                                    !urlObj.hostname.endsWith('vercel.app') &&
-                                    !urlObj.hostname.endsWith('newsagent.com')) {
+                            // Check if it's a data URL (starts with 'data:')
+                            if (data.image.startsWith('data:')) {
+                                // For data URLs, use directly without proxy
+                                fabric.FabricImage.fromURL(data.image).then((img: fabric.FabricImage) => {
+                                    // Simply scale the image to fit the shape's dimensions
+                                    const scaleX = (obj.width || 0) / img.width!;
+                                    const scaleY = (obj.height || 0) / img.height!;
+
+                                    // Apply the same position and scaling as the original shape
+                                    img.set({
+                                        left: obj.left,
+                                        top: obj.top,
+                                        scaleX: scaleX,
+                                        scaleY: scaleY,
+                                        originX: obj.originX || 'left',
+                                        originY: obj.originY || 'top',
+                                        angle: obj.angle || 0,
+                                    })
+
+                                    canvas.remove(obj)
+                                    canvas.add(img)
+                                    canvas.renderAll()
+                                }).catch(err => {
+                                    console.error('Error loading image:', err)
+                                })
+                            } else {
+                                // For regular URLs, check if external and needs proxying
+                                let imageUrl = data.image;
+                                try {
+                                    const urlObj = new URL(data.image);
+                                    // If the image is from an external domain, use the proxy
+                                    if (urlObj.hostname !== window.location.hostname &&
+                                        urlObj.hostname !== 'localhost' &&
+                                        !urlObj.hostname.endsWith('vercel.app') &&
+                                        !urlObj.hostname.endsWith('newsagent.com')) {
+                                        imageUrl = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(data.image)}`;
+                                    }
+                                } catch (e) {
+                                    // If URL parsing fails, treat as external and use proxy
                                     imageUrl = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(data.image)}`;
                                 }
-                            } catch (e) {
-                                // If URL parsing fails, treat as external and use proxy
-                                imageUrl = `${window.location.origin}/api/image-proxy?url=${encodeURIComponent(data.image)}`;
-                            }
 
-                            fabric.FabricImage.fromURL(imageUrl).then((img: fabric.FabricImage) => {
-                                // Simply scale the image to fit the shape's dimensions
-                                const scaleX = (obj.width || 0) / img.width!;
-                                const scaleY = (obj.height || 0) / img.height!;
+                                fabric.FabricImage.fromURL(imageUrl).then((img: fabric.FabricImage) => {
+                                    // Simply scale the image to fit the shape's dimensions
+                                    const scaleX = (obj.width || 0) / img.width!;
+                                    const scaleY = (obj.height || 0) / img.height!;
 
-                                // Apply the same position and scaling as the original shape
-                                img.set({
-                                    left: obj.left,
-                                    top: obj.top,
-                                    scaleX: scaleX,
-                                    scaleY: scaleY,
-                                    originX: obj.originX || 'left',
-                                    originY: obj.originY || 'top',
-                                    angle: obj.angle || 0,
+                                    // Apply the same position and scaling as the original shape
+                                    img.set({
+                                        left: obj.left,
+                                        top: obj.top,
+                                        scaleX: scaleX,
+                                        scaleY: scaleY,
+                                        originX: obj.originX || 'left',
+                                        originY: obj.originY || 'top',
+                                        angle: obj.angle || 0,
+                                    })
+
+                                    canvas.remove(obj)
+                                    canvas.add(img)
+                                    canvas.renderAll()
+                                }).catch(err => {
+                                    console.error('Error loading image:', err)
                                 })
-
-                                canvas.remove(obj)
-                                canvas.add(img)
-                                canvas.renderAll()
-                            }).catch(err => {
-                                console.error('Error loading image:', err)
-                            })
+                            }
                         }
                     }
                 }
