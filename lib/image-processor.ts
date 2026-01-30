@@ -57,7 +57,23 @@ async function fetchImage(imageUrl: string, timeout: number = 10000): Promise<Bu
 
             console.log(`${logPrefix} Fetching external URL (timeout=${timeout}ms)`);
 
-            const response = await fetch(imageUrl, {
+            // Check if the image URL is external and needs proxying
+            let fetchUrl = imageUrl;
+            try {
+                const urlObj = new URL(imageUrl);
+                // If the image is from an external domain, use the proxy
+                if (urlObj.hostname !== new URL(process.env.NEXT_PUBLIC_APP_URL!).hostname &&
+                    urlObj.hostname !== 'localhost' &&
+                    !urlObj.hostname.endsWith('vercel.app') &&
+                    !urlObj.hostname.endsWith('newsagent.com')) {
+                    fetchUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+                }
+            } catch (e) {
+                // If URL parsing fails, treat as external and use proxy
+                fetchUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+            }
+
+            const response = await fetch(fetchUrl, {
                 signal: controller.signal,
                 headers: {
                     'User-Agent': 'NewsAgent/1.0',

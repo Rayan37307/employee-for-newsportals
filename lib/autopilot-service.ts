@@ -1,5 +1,6 @@
 import { getLatestNews } from '@/lib/bangladesh-guardian-agent';
-import { generateCardImage } from '@/lib/card-generator-puppeteer';
+import { generateCardImageNew } from '@/lib/konva-card-generator';
+import { fabricToKonvaTemplate } from '@/lib/template-utils';
 import { compositeImage, getImagePlaceholder } from '@/lib/image-processor';
 import prisma from '@/lib/db';
 
@@ -53,7 +54,23 @@ class AutopilotService {
               try {
                 // Use the image from the newsItem if available
                 if (newsItem.image) {
-                  const imageResponse = await fetch(newsItem.image);
+                  // Check if the image URL is external and needs proxying
+                  let imageUrl = newsItem.image;
+                  try {
+                    const urlObj = new URL(newsItem.image);
+                    // If the image is from an external domain, use the proxy
+                    if (urlObj.hostname !== new URL(process.env.NEXT_PUBLIC_APP_URL!).hostname &&
+                        urlObj.hostname !== 'localhost' &&
+                        !urlObj.hostname.endsWith('vercel.app') &&
+                        !urlObj.hostname.endsWith('newsagent.com')) {
+                      imageUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/image-proxy?url=${encodeURIComponent(newsItem.image)}`;
+                    }
+                  } catch (e) {
+                    // If URL parsing fails, treat as external and use proxy
+                    imageUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/image-proxy?url=${encodeURIComponent(newsItem.image)}`;
+                  }
+
+                  const imageResponse = await fetch(imageUrl);
                   if (imageResponse.ok) {
                     imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
                     console.log(`${logPrefix} SUCCESS: Fetched article image (${imageBuffer.length} bytes)`);
@@ -74,8 +91,30 @@ class AutopilotService {
               try {
                 // Generate a news card using the template
                 console.log(`${logPrefix} Generating card base (text only)...`);
-                let cardBuffer = await generateCardImage({
-                  template,
+
+                // Convert the template from stored format to Konva format
+                let konvaTemplate;
+                try {
+                  // If canvasData is a string, parse it; otherwise use as-is
+                  const parsedTemplate = typeof template.canvasData === 'string'
+                    ? JSON.parse(template.canvasData)
+                    : template.canvasData;
+
+                  // Convert Fabric.js format to Konva format if needed
+                  if (parsedTemplate.objects) {
+                    // This looks like a Fabric.js format, convert it
+                    konvaTemplate = fabricToKonvaTemplate(parsedTemplate);
+                  } else {
+                    // This is already in Konva format
+                    konvaTemplate = parsedTemplate;
+                  }
+                } catch (parseError) {
+                  console.error('Error parsing template:', parseError);
+                  throw new Error(`Invalid template format: ${parseError}`);
+                }
+
+                let cardBuffer = await generateCardImageNew({
+                  template: konvaTemplate,
                   mapping: mappedData,
                   newsItem: {
                     ...newsItem,

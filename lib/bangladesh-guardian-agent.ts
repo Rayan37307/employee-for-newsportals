@@ -186,6 +186,35 @@ async function fetchArticleData(url: string): Promise<{
 }
 
 /**
+ * Fetch a single article by its URL
+ */
+export async function getArticleByUrl(url: string) {
+  try {
+    const articleData = await fetchArticleData(url);
+
+    if (!articleData) {
+      return null;
+    }
+
+    // Format the article data to match the expected structure
+    return {
+      title: articleData.title ? sanitizeText(articleData.title) : null,
+      link: articleData.url,
+      description: articleData.description ? sanitizeText(articleData.description) : null,
+      image: articleData.image || null,
+      date: articleData.date || null,
+      content: articleData.description || null, // Using description as content if available
+      author: null, // Author is not extracted in the current implementation
+      publishedAt: articleData.date || null,
+      category: null // Category is not extracted in the current implementation
+    };
+  } catch (error) {
+    console.error(`Error getting article by URL ${url}:`, error);
+    return null;
+  }
+}
+
+/**
  * Fetch the latest news from Bangladesh Guardian by scraping /latest/ page
  */
 export async function getLatestNews(): Promise<NewsItem[]> {

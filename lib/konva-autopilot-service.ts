@@ -1,6 +1,6 @@
 import prisma from '@/lib/db'
 import { generateCardImageNew } from '@/lib/konva-card-generator'
-import { deserializeTemplate, fabricToKonvaTemplate } from '@/lib/template-utils'
+import { deserializeTemplate } from '@/lib/template-utils'
 import { checkForSensitiveContent } from '@/lib/sensitive-content'
 
 export interface AutopilotResult {
@@ -126,7 +126,7 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
         if (settings.sensitiveFilter && sensitiveWords.length > 0) {
           const titleToCheck = article.title || article.sanitizedTitle || ''
           const isSensitive = checkForSensitiveContent(titleToCheck, sensitiveWords)
-          
+
           if (isSensitive) {
             console.log(`[Autopilot] Skipping sensitive content: ${titleToCheck.substring(0, 50)}...`)
             result.skipped++
@@ -181,13 +181,14 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
           let konvaTemplate;
           try {
             // If canvasData is a string, parse it; otherwise use as-is
-            const parsedTemplate = typeof template.canvasData === 'string'
-              ? JSON.parse(template.canvasData)
+            const parsedTemplate = typeof template.canvasData === 'string' 
+              ? JSON.parse(template.canvasData) 
               : template.canvasData;
-
+            
             // Convert Fabric.js format to Konva format if needed
             if (parsedTemplate.objects) {
               // This looks like a Fabric.js format, convert it
+              const { fabricToKonvaTemplate } = await import('@/lib/template-utils');
               konvaTemplate = fabricToKonvaTemplate(parsedTemplate);
             } else {
               // This is already in Konva format
@@ -269,7 +270,7 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
     result.errors.push(errorMsg)
     result.success = false
     console.error('[Autopilot] Fatal error:', error)
-    
+
     // Update settings with error
     const settings = await prisma.autopilotSettings.findFirst({
       where: { userId },
@@ -280,7 +281,7 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
         data: { lastError: String(error) },
       })
     }
-    
+
     await completeRun(run.id, result)
     return result
   }

@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['canvas', 'fabric', 'jsdom'],
+  serverExternalPackages: ['canvas', 'jsdom'],
 };
 
 export default nextConfig;
