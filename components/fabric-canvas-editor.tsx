@@ -362,6 +362,8 @@ export function useCanvas() {
                 fill: '#d946ef',
                 stroke: '#9333ea',
                 strokeWidth: 2,
+                rx: 0,  // Border radius X
+                ry: 0,  // Border radius Y
                 dynamicField: 'none',
             })
 

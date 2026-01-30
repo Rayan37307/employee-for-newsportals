@@ -27,6 +27,8 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
         fontFamily: string
         fontWeight: string
         textAlign: string
+        rx: number  // Border radius X
+        ry: number  // Border radius Y
         dynamicField: DynamicField
         fallbackValue: string
     }>({
@@ -43,6 +45,8 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
         fontFamily: 'Arial',
         fontWeight: 'normal',
         textAlign: 'left',
+        rx: 0,  // Default border radius X
+        ry: 0,  // Default border radius Y
         dynamicField: 'none' as DynamicField,
         fallbackValue: '',
     })
@@ -103,6 +107,8 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
             newProps.fill = (obj as any).fill || '#000000'
             newProps.stroke = (obj as any).stroke || '#000000'
             newProps.strokeWidth = (obj as any).strokeWidth || 0
+            newProps.rx = (obj as any).rx || 0  // Border radius X
+            newProps.ry = (obj as any).ry || 0  // Border radius Y
         }
 
         if (obj.type === 'i-text' || obj.type === 'text') {
@@ -159,6 +165,11 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
 
         if (key === 'fallbackValue') {
             selectedObject.set('fallbackValue', value)
+        }
+
+        // Handle border radius properties specifically for shapes
+        if (key === 'rx' || key === 'ry') {
+            selectedObject.set(key, parseInt(value));
         }
 
         if (key !== 'width' || !isText) {
@@ -462,6 +473,32 @@ export function PropertiesPanel({ canvas, customFonts = [], onFontUpload }: Prop
                                 value={properties.strokeWidth}
                                 onChange={(e) => handlePropertyChange('strokeWidth', parseInt(e.target.value))}
                                 className="w-full px-3 py-2 rounded-lg bg-input border border-border text-sm"
+                            />
+                        </div>
+                    </>
+                )}
+
+                {/* Border Radius (for shapes) */}
+                {isShape && (
+                    <>
+                        <div>
+                            <label className="text-sm font-medium mb-2 block">Border Radius X</label>
+                            <input
+                                type="number"
+                                value={properties.rx}
+                                onChange={(e) => handlePropertyChange('rx', parseInt(e.target.value))}
+                                className="w-full px-3 py-2 rounded-lg bg-input border border-border text-sm"
+                                min="0"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-sm font-medium mb-2 block">Border Radius Y</label>
+                            <input
+                                type="number"
+                                value={properties.ry}
+                                onChange={(e) => handlePropertyChange('ry', parseInt(e.target.value))}
+                                className="w-full px-3 py-2 rounded-lg bg-input border border-border text-sm"
+                                min="0"
                             />
                         </div>
                     </>
