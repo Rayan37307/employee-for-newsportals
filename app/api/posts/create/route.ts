@@ -1,8 +1,7 @@
 
 import db from '@/lib/db'
 import { getCurrentUser } from '@/lib/session'
-import { generateCardImageNew } from '@/lib/konva-card-generator'
-import { fabricToKonvaTemplate } from '@/lib/template-utils'
+import { generateCardImage } from '@/lib/card-generator-puppeteer'
 import { compositeImage, getImagePlaceholder } from '@/lib/image-processor'
 import { publishToFacebook } from '@/lib/social-publisher'
 import { NextResponse } from 'next/server'
@@ -91,29 +90,8 @@ export async function POST(req: Request) {
 
 
         // 3. Generate Image
-        // Convert the template from stored format to Konva format
-        let konvaTemplate;
-        try {
-          // If canvasData is a string, parse it; otherwise use as-is
-          const parsedTemplate = typeof template.canvasData === 'string'
-            ? JSON.parse(template.canvasData)
-            : template.canvasData;
-
-          // Convert Fabric.js format to Konva format if needed
-          if (parsedTemplate.objects) {
-            // This looks like a Fabric.js format, convert it
-            konvaTemplate = fabricToKonvaTemplate(parsedTemplate);
-          } else {
-            // This is already in Konva format
-            konvaTemplate = parsedTemplate;
-          }
-        } catch (parseError) {
-          console.error('Error parsing template:', parseError);
-          throw new Error(`Invalid template format: ${parseError}`);
-        }
-
-        let imageBuffer = await generateCardImageNew({
-            template: konvaTemplate,
+        let imageBuffer = await generateCardImage({
+            template,
             mapping: (mapping as any)?.sourceFields || {},
             newsItem: newsItem
         })

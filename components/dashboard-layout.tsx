@@ -7,13 +7,13 @@ import {
     FileText,
     Rss,
     History,
-    BarChart3,
     Menu,
     X,
     Settings,
     Bell,
     Check,
-    CreditCard
+    CreditCard,
+    Zap
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -25,7 +25,7 @@ const navigation = [
     { name: 'Templates', href: '/templates', icon: FileText },
     { name: 'Sources', href: '/sources', icon: Rss },
     { name: 'History', href: '/history', icon: History },
-    { name: 'Analytics', href: '/analytics', icon: BarChart3 },
+    { name: 'Autopilot', href: '/autopilot', icon: Zap },
     { name: 'Settings', href: '/settings', icon: Settings },
 ]
 

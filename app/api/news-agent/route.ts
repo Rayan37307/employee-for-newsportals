@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateCardImageNew } from '@/lib/konva-card-generator';
-import { fabricToKonvaTemplate } from '@/lib/template-utils';
+import { generateCardImage } from '@/lib/card-generator-puppeteer';
 import { compositeImage, getImagePlaceholder, validateImage } from '@/lib/image-processor';
 import prisma from '@/lib/db';
 import { getLatestNews, sanitizeText } from '@/lib/bangladesh-guardian-agent';
-import { autopilotService } from '@/lib/autopilot-service';
 
 // In-memory storage for tracking posted links (in production, use database)
 const postedLinks = new Set<string>();
@@ -19,15 +17,9 @@ export async function GET(request: NextRequest) {
         const news = await getLatestNews();
         return NextResponse.json({ success: true, news });
 
-      case 'autopilot-status':
-        return NextResponse.json({
-          success: true,
-          isRunning: autopilotService.isAutopilotRunning()
-        });
-
       default:
         return NextResponse.json({
-          error: 'Invalid action. Use ?action=fetch-news or ?action=autopilot-status'
+          error: 'Invalid action. Use ?action=fetch-news'
         }, { status: 400 });
     }
   } catch (error) {
@@ -45,25 +37,7 @@ export async function POST(request: NextRequest) {
     const { action } = body;
 
     switch (action) {
-      case 'start-autopilot':
-        try {
-          await autopilotService.startAutopilot();
-          return NextResponse.json({ success: true, message: 'Autopilot started' });
-        } catch (error) {
-          console.error('Error starting autopilot:', error);
-          return NextResponse.json({ success: false, error: 'Failed to start autopilot' }, { status: 500 });
-        }
-
-      case 'stop-autopilot':
-        try {
-          await autopilotService.stopAutopilot();
-          return NextResponse.json({ success: true, message: 'Autopilot stopped' });
-        } catch (error) {
-          console.error('Error stopping autopilot:', error);
-          return NextResponse.json({ success: false, error: 'Failed to stop autopilot' }, { status: 500 });
-        }
-
-        case 'generate-card':
+      case 'generate-card':
           const { templateId, newsItem } = body;
           const logPrefix = '[API][Image]';
 
@@ -97,29 +71,8 @@ export async function POST(request: NextRequest) {
           // Generate the card image (with text replacements)
           console.log(`${logPrefix} Generating base card (text only)...`);
 
-          // Convert the template from stored format to Konva format
-          let konvaTemplate;
-          try {
-            // If canvasData is a string, parse it; otherwise use as-is
-            const parsedTemplate = typeof template.canvasData === 'string'
-              ? JSON.parse(template.canvasData)
-              : template.canvasData;
-
-            // Convert Fabric.js format to Konva format if needed
-            if (parsedTemplate.objects) {
-              // This looks like a Fabric.js format, convert it
-              konvaTemplate = fabricToKonvaTemplate(parsedTemplate);
-            } else {
-              // This is already in Konva format
-              konvaTemplate = parsedTemplate;
-            }
-          } catch (parseError) {
-            console.error('Error parsing template:', parseError);
-            throw new Error(`Invalid template format: ${parseError}`);
-          }
-
-          let cardBuffer = await generateCardImageNew({
-            template: konvaTemplate,
+          let cardBuffer = await generateCardImage({
+            template,
             mapping: mappedData,
             newsItem
           });

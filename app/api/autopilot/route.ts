@@ -19,7 +19,7 @@ export async function GET(request: Request) {
         data: {
           userId: user.id,
           isEnabled: false,
-          checkInterval: 15,
+          checkInterval: 5, // 5 minutes default
           generateCards: true,
           sensitiveFilter: true,
           notifyOnNewCard: true,
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
       update: {
         isEnabled,
         templateId: templateId || null,
-        checkInterval: checkInterval || 15,
+        checkInterval: checkInterval || 5,
         generateCards,
         sensitiveFilter,
         notifyOnNewCard,
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
         userId: user.id,
         isEnabled,
         templateId: templateId || null,
-        checkInterval: checkInterval || 15,
+        checkInterval: checkInterval || 5,
         generateCards,
         sensitiveFilter,
         notifyOnNewCard,

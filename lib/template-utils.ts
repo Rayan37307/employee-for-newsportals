@@ -1,10 +1,19 @@
-import { KonvaTemplate } from '@/components/konva-canvas-editor';
-
 /**
- * Serializes a KonvaTemplate to JSON string
+ * Deserializes a JSON string to template
  */
-export function serializeTemplate(template: KonvaTemplate): string {
-  return JSON.stringify(template, null, 2);
+export function deserializeTemplate(jsonString: string): any {
+  try {
+    return JSON.parse(jsonString);
+  } catch (error) {
+    console.error('Error deserializing template:', error);
+    // Return a default template in case of error
+    return {
+      width: 1200,
+      height: 630,
+      backgroundColor: '#ffffff',
+      elements: []
+    };
+  }
 }
 
 /**

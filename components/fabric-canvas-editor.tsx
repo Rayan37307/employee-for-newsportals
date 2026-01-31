@@ -11,6 +11,14 @@ export interface DynamicFieldConfig {
   fallbackValue?: string;
 }
 
+// Extend fabric.Canvas type to include custom properties
+declare module 'fabric' {
+  interface Canvas {
+    cancelRequested?: boolean;
+    contextContainer: any;
+  }
+}
+
 interface CanvasEditorProps {
     width?: number
     height?: number
@@ -332,6 +340,11 @@ export function useCanvas() {
 
     const addText = (text: any = 'Add Text') => {
         waitForCanvas((canvas) => {
+            // Ignore event objects (when called from onClick)
+            if (text && typeof text === 'object' && text.type) {
+                text = 'Add Text';
+            }
+
             // Ensure text is always a string to prevent "t.split is not a function" error
             // Use 'Add Text' as default if no text is provided
             const textString = String(text ?? 'Add Text');

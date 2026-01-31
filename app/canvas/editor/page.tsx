@@ -254,7 +254,7 @@ export default function CanvasEditorPage() {
     canvasData.height = canvasHeight
 
     // Generate thumbnail by exporting current canvas
-    const thumbnail = canvas.toDataURL({ format: 'png', quality: 0.8 })
+    const thumbnail = canvas.toDataURL({ format: 'png', multiplier: 1 })
 
     try {
       setSaving(true)
@@ -496,9 +496,9 @@ export default function CanvasEditorPage() {
               </button>
               
               <button
-                onClick={() => {
+                  onClick={() => {
                   if (canvas) {
-                    const json = canvas.toJSON(['dynamicField', 'fallbackValue'])
+                    const json = (canvas as any).toJSON({ propertiesToInclude: ['dynamicField', 'fallbackValue'] })
                     const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' })
                     const link = document.createElement('a')
                     link.download = 'template.json'

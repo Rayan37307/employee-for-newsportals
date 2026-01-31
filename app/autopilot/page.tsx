@@ -2,13 +2,14 @@ import { getCurrentUser } from '@/lib/session'
 import prisma from '@/lib/db'
 import { redirect } from 'next/navigation'
 import { AutopilotDashboard } from './dashboard-client'
+import { getAutopilotStats } from '@/lib/services/autopilot-service'
 
 async function getAutopilotData(userId: string) {
   const [settings, stats, recentRuns, templates, sensitiveWords] = await Promise.all([
     prisma.autopilotSettings.findUnique({
       where: { userId },
     }),
-    import('@/lib/services/autopilot-service').then(m => m.getAutopilotStats(userId)),
+    getAutopilotStats(userId),
     prisma.autopilotRun.findMany({
       where: { userId },
       orderBy: { startedAt: 'desc' },

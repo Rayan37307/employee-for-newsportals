@@ -1,7 +1,6 @@
 
 import db from '@/lib/db'
-import { generateCardImageNew } from '@/lib/konva-card-generator'
-import { fabricToKonvaTemplate } from '@/lib/template-utils'
+import { generateCardImage } from '@/lib/card-generator-puppeteer'
 import { compositeImage, getImagePlaceholder } from '@/lib/image-processor'
 import { publishToFacebook } from '@/lib/social-publisher'
 import { runAutopilot } from './services/autopilot-service'
@@ -47,29 +46,8 @@ export async function processScheduledPosts() {
 
             console.log(`${logPrefix} Generating card for scheduled post...`);
 
-            // Convert the template from stored format to Konva format
-            let konvaTemplate;
-            try {
-              // If canvasData is a string, parse it; otherwise use as-is
-              const parsedTemplate = typeof newsCard.template.canvasData === 'string'
-                ? JSON.parse(newsCard.template.canvasData)
-                : newsCard.template.canvasData;
-
-              // Convert Fabric.js format to Konva format if needed
-              if (parsedTemplate.objects) {
-                // This looks like a Fabric.js format, convert it
-                konvaTemplate = fabricToKonvaTemplate(parsedTemplate);
-              } else {
-                // This is already in Konva format
-                konvaTemplate = parsedTemplate;
-              }
-            } catch (parseError) {
-              console.error('Error parsing template:', parseError);
-              throw new Error(`Invalid template format: ${parseError}`);
-            }
-
-            let imageBuffer = await generateCardImageNew({
-                template: konvaTemplate,
+            let imageBuffer = await generateCardImage({
+                template: newsCard.template,
                 mapping: mapping,
                 newsItem: newsItem
             });
@@ -158,19 +136,26 @@ export async function processAutopilotRuns() {
         where: {
             isEnabled: true,
             OR: [
-                { lastRunAt: { lt: new Date(now.getTime() - 15 * 60 * 1000) } }, // More than 15 mins ago
+                { lastRunAt: { lt: new Date(now.getTime() - (15 * 60 * 1000)) } }, // More than 15 mins ago (default max)
                 { lastRunAt: null } // Never run
             ]
         }
     })
 
-    console.log(`[Scheduler][Autopilot] Found ${settings.length} enabled users to process`)
+    // Filter by individual checkInterval settings
+    const eligibleSettings = settings.filter(setting => {
+        if (!setting.lastRunAt) return true // Never run
+        const intervalMs = (setting.checkInterval || 5) * 60 * 1000 // 5 minutes default
+        return now.getTime() - new Date(setting.lastRunAt).getTime() >= intervalMs
+    })
+
+    console.log(`[Scheduler][Autopilot] Found ${settings.length} enabled users, ${eligibleSettings.length} eligible to run`)
 
     const results = []
 
-    for (const setting of settings) {
+    for (const setting of eligibleSettings) {
         try {
-            console.log(`[Scheduler][Autopilot] Running autopilot for user ${setting.userId}`)
+            console.log(`[Scheduler][Autopilot] Running autopilot for user ${setting.userId} (interval: ${setting.checkInterval}min)`)
             
             const result = await runAutopilot(setting.userId)
             

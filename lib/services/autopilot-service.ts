@@ -1,6 +1,6 @@
 import prisma from '@/lib/db'
-import { generateCardImageNew } from '@/lib/konva-card-generator'
-import { deserializeTemplate, fabricToKonvaTemplate } from '@/lib/template-utils'
+import { generateCardImage } from '@/lib/card-generator-puppeteer'
+import { deserializeTemplate } from '@/lib/template-utils'
 import { checkForSensitiveContent } from '@/lib/sensitive-content'
 
 export interface AutopilotResult {
@@ -46,6 +46,51 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
     },
   })
   result.runId = run.id
+
+  // Get autopilot settings
+  const settings = await prisma.autopilotSettings.findFirst({
+    where: { userId, isEnabled: true },
+  })
+
+  if (!settings) {
+    result.errors.push('Autopilot is not enabled')
+    result.success = false
+    await completeRun(run.id, result)
+    return result
+  }
+
+  // Check if template is selected
+  if (!settings.templateId) {
+    result.errors.push('No template selected for autopilot')
+    result.success = false
+    await completeRun(run.id, result)
+    return result
+  }
+
+  // Get template
+  const template = await prisma.template.findFirst({
+    where: { id: settings.templateId, userId },
+  })
+
+  if (!template) {
+    result.errors.push('Selected template not found')
+    result.success = false
+    await completeRun(run.id, result)
+    return result
+  }
+
+  // Get sensitive words if filtering enabled
+  let sensitiveWords: string[] = []
+  if (settings.sensitiveFilter) {
+    const words = await prisma.sensitiveWord.findMany({
+      where: { userId, isActive: true },
+      select: { word: true },
+    })
+    sensitiveWords = words.map((w: { word: string }) => w.word)
+  }
+
+   // Use empty mapping since dataMapping model was removed
+   const dataMapping = null;
 
   try {
     // Get autopilot settings
@@ -176,34 +221,20 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
         // Generate card
         if (settings.generateCards) {
           console.log(`[Autopilot] Generating card for: ${article.title?.substring(0, 50)}...`)
-
-          // Convert the template from stored format to Konva format
-          let konvaTemplate;
-          try {
-            // If canvasData is a string, parse it; otherwise use as-is
-            const parsedTemplate = typeof template.canvasData === 'string'
-              ? JSON.parse(template.canvasData)
-              : template.canvasData;
-
-            // Convert Fabric.js format to Konva format if needed
-            if (parsedTemplate.objects) {
-              // This looks like a Fabric.js format, convert it
-              konvaTemplate = fabricToKonvaTemplate(parsedTemplate);
-            } else {
-              // This is already in Konva format
-              konvaTemplate = parsedTemplate;
-            }
-          } catch (parseError) {
-            console.error('Error parsing template:', parseError);
-            throw new Error(`Invalid template format: ${parseError}`);
-          }
+          console.log(`[Autopilot] Using template ID: ${template.id}, name: ${template.name}`)
 
           const mapping = dataMapping
             ? { sourceFields: (dataMapping as any).sourceFields as Record<string, string> }
             : {}
 
-          const imageBuffer = await generateCardImageNew({
-            template: konvaTemplate,
+          console.log(`[Autopilot] Article data:`, {
+            title: article.title?.substring(0, 50),
+            description: article.description?.substring(0, 50),
+            image: article.image?.substring(0, 50)
+          })
+
+          const imageBuffer = await generateCardImage({
+            template,
             mapping,
             newsItem: article,
           })
@@ -214,7 +245,7 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
           const formData = new FormData()
           formData.append('file', blob, 'card.png')
 
-          const uploadResponse = await fetch('/api/upload', {
+          const uploadResponse = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/upload`, {
             method: 'POST',
             body: formData,
           })

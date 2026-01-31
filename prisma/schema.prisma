@@ -176,7 +176,7 @@ model AutopilotSettings {
   id              String   @id @default(cuid())
   isEnabled       Boolean  @default(false)
   templateId      String?
-  checkInterval   Int      @default(15) // minutes
+  checkInterval   Int      @default(5) // minutes - 5 minutes as requested
   generateCards   Boolean  @default(true)
   sensitiveFilter Boolean  @default(true)
   notifyOnNewCard Boolean  @default(true)
