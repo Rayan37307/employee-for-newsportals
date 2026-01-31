@@ -12,7 +12,8 @@ import {
     FileText,
     Eye,
     Settings,
-    Clock
+    Clock,
+    Trash2
 } from 'lucide-react'
 
 interface Template {
@@ -114,6 +115,34 @@ export default function CanvasWelcomePage() {
         // For now, just create a new canvas with the template loaded
         // In the future, we can pass the template ID to load it
         router.push(`/canvas/editor?template=${template.id}&name=${encodeURIComponent(template.name)}`)
+    }
+
+    const handleDeleteTemplate = async (template: Template, e: React.MouseEvent) => {
+        e.stopPropagation()
+        
+        if (template.isSystem) {
+            alert('System templates cannot be deleted')
+            return
+        }
+
+        const confirmed = confirm(`Are you sure you want to delete "${template.name}"?`)
+        if (!confirmed) return
+
+        try {
+            const response = await fetch(`/api/templates/${template.id}`, {
+                method: 'DELETE'
+            })
+
+            if (response.ok) {
+                setRecentTemplates(prev => prev.filter(t => t.id !== template.id))
+            } else {
+                const error = await response.json()
+                alert(error.error || 'Failed to delete template')
+            }
+        } catch (error) {
+            console.error('Error deleting template:', error)
+            alert('Failed to delete template')
+        }
     }
 
     return (
@@ -252,6 +281,15 @@ export default function CanvasWelcomePage() {
                                                     <Eye className="w-4 h-4 mr-2" />
                                                     Open
                                                 </Button>
+                                                {!template.isSystem && (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="destructive"
+                                                        onClick={(e) => handleDeleteTemplate(template, e)}
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </Button>
+                                                )}
                                             </div>
                                         </div>
 

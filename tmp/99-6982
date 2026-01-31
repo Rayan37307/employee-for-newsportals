@@ -1,0 +1,34 @@
+async function testAuthSystem() {
+  console.log('Testing Auth System...');
+
+  try {
+    console.log('Testing auth configuration...');
+    
+    const { authOptions } = await import('@/lib/auth');
+    
+    console.log('Auth providers configured:');
+    authOptions.providers?.forEach((provider, index) => {
+      console.log(`  ${index + 1}. ${provider.name}`);
+    });
+    
+    console.log(`Session strategy: ${authOptions.session?.strategy}`);
+    console.log('Custom pages configured:');
+    Object.entries(authOptions.pages || {}).forEach(([key, value]) => {
+      console.log(`  ${key}: ${value}`);
+    });
+    
+    console.log('Testing database connection for auth...');
+    const { default: prisma } = await import('@/lib/db');
+    
+    try {
+      const userCount = await prisma.user.count();
+      console.log(`Database connection successful. Total users: ${userCount}`);
+    } catch (dbError) {
+      console.error('Database connection failed:', dbError);
+    }
+    
+    console.log('Auth system test completed successfully');
+  } catch (error) {
+    console.error('Auth system test failed:', error);
+  }
+}

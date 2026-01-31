@@ -58,11 +58,19 @@ export async function PATCH(
         }
 
         const body = await request.json()
-        const { isPublic } = body
+        const { name, description, category, canvasData, thumbnail, isPublic } = body
+
+        const updateData: any = {}
+        if (name !== undefined) updateData.name = name
+        if (description !== undefined) updateData.description = description
+        if (category !== undefined) updateData.category = category
+        if (canvasData !== undefined) updateData.canvasData = canvasData
+        if (thumbnail !== undefined) updateData.thumbnail = thumbnail
+        if (isPublic !== undefined) updateData.isPublic = isPublic
 
         const updatedTemplate = await prisma.template.update({
             where: { id },
-            data: { isPublic },
+            data: updateData,
             include: {
                 user: {
                     select: {

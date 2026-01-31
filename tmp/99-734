@@ -1,0 +1,143 @@
+async function testCardGeneration() {
+  console.log('Testing Card Generation...');
+
+  try {
+    const { getLatestNews } = await import('@/lib/bangladesh-guardian-agent');
+    const { generateCardImage } = await import('@/lib/konva-export-util');
+    const prisma = await import('@/lib/db').then(m => m.default);
+
+    console.log('Fetching news...');
+    const articles = await getLatestNews();
+
+    if (articles.length === 0) {
+      console.log('No articles found. Skipping card generation test.');
+      return;
+    }
+
+    const article = articles[0];
+    console.log(`Using article: ${article.title}`);
+
+    console.log('Fetching templates...');
+    let template = await prisma.template.findFirst({
+      where: { isSystem: true }
+    });
+
+    if (!template) {
+      console.log('No system template found. Creating a test template...');
+
+      const testTemplateData = {
+        width: 1080,
+        height: 1080,
+        backgroundColor: '#ffffff',
+        elements: [
+          {
+            id: 'bg',
+            type: 'rect',
+            x: 0,
+            y: 0,
+            width: 1080,
+            height: 1080,
+            fill: '#1a1a2e'
+          },
+          {
+            id: 'image',
+            type: 'rect',
+            x: 0,
+            y: 0,
+            width: 1080,
+            height: 600,
+            dynamicField: 'image'
+          },
+          {
+            id: 'title',
+            type: 'text',
+            x: 40,
+            y: 640,
+            fontSize: 48,
+            fontFamily: 'Arial',
+            fill: '#ffffff',
+            dynamicField: 'title'
+          },
+          {
+            id: 'date',
+            type: 'text',
+            x: 40,
+            y: 720,
+            fontSize: 24,
+            fontFamily: 'Arial',
+            fill: '#a0a0a0',
+            dynamicField: 'date'
+          },
+          {
+            id: 'description',
+            type: 'text',
+            x: 40,
+            y: 770,
+            fontSize: 28,
+            fontFamily: 'Arial',
+            fill: '#e0e0e0',
+            dynamicField: 'description'
+          }
+        ]
+      };
+
+      const testUser = await prisma.user.upsert({
+        where: { id: 'test-user' },
+        update: {},
+        create: {
+          id: 'test-user',
+          email: 'test@example.com',
+          name: 'Test User',
+          role: 'USER'
+        }
+      });
+
+      template = await prisma.template.create({
+        data: {
+          name: 'Test Template',
+          description: 'Test template for card generation',
+          category: 'CUSTOM',
+          canvasData: testTemplateData,
+          isPublic: true,
+          isSystem: true,
+          userId: testUser.id
+        }
+      });
+
+      console.log('Test template created.');
+    }
+
+    const canvasData = template.canvasData as any;
+    const newsItem = {
+      title: article.title,
+      description: article.description || '',
+      date: article.date || new Date().toLocaleDateString(),
+      image: article.image || ''
+    };
+
+    console.log('Generating card image...');
+    const cardBuffer = await generateCardImage({
+      template: canvasData,
+      newsItem
+    });
+
+    console.log('Card image generated. Buffer size:', cardBuffer.length);
+
+    const fs = await import('fs');
+    const path = await import('path');
+    const outputDir = path.join(process.cwd(), 'test-output');
+    
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    const outputFile = path.join(outputDir, `test-card-${Date.now()}.png`);
+    fs.writeFileSync(outputFile, cardBuffer);
+    console.log(`Card saved to: ${outputFile}`);
+
+    console.log('Card generation test completed successfully!');
+
+  } catch (error) {
+    console.error('Card generation test failed:', error);
+  }
+}

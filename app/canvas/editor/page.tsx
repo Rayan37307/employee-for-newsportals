@@ -258,8 +258,13 @@ export default function CanvasEditorPage() {
 
     try {
       setSaving(true)
-      const response = await fetch('/api/templates', {
-        method: 'POST',
+
+      // Check if editing existing template or creating new
+      const url = templateId ? `/api/templates/${templateId}` : '/api/templates'
+      const method = templateId ? 'PATCH' : 'POST'
+
+      const response = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -274,10 +279,12 @@ export default function CanvasEditorPage() {
       })
 
       if (response.ok) {
-        alert('Template saved successfully!')
+        alert(templateId ? 'Template updated successfully!' : 'Template saved successfully!')
         setShowSaveModal(false)
-        setTemplateName(canvasName) // Reset to default name
-        setTemplateDescription('')
+        if (!templateId) {
+          setTemplateName(canvasName)
+          setTemplateDescription('')
+        }
       } else {
         const error = await response.json()
         alert(`Failed to save template: ${error.error}`)
@@ -567,7 +574,7 @@ export default function CanvasEditorPage() {
                 className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-2"
               >
                 <Save className="w-4 h-4" />
-                Save Template
+                {templateId ? 'Update Template' : 'Save Template'}
               </button>
             </div>
           </div>
@@ -596,7 +603,7 @@ export default function CanvasEditorPage() {
       {showSaveModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-card border border-border rounded-lg p-6 max-w-md w-full mx-4">
-            <h2 className="text-xl font-semibold mb-4">Save Template</h2>
+            <h2 className="text-xl font-semibold mb-4">{templateId ? 'Update Template' : 'Save Template'}</h2>
 
             <div className="space-y-4">
               <div>
@@ -634,7 +641,7 @@ export default function CanvasEditorPage() {
                 onClick={handleSaveTemplate}
                 disabled={saving}
               >
-                {saving ? 'Saving...' : 'Save Template'}
+                {saving ? 'Saving...' : (templateId ? 'Update Template' : 'Save Template')}
               </Button>
             </div>
           </div>
