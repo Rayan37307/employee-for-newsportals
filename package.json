@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:reset-cards": "npx tsx scripts/reset-cards.ts"
   },
   "dependencies": {
     "@next-auth/prisma-adapter": "^1.0.7",

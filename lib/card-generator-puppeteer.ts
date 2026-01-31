@@ -8,7 +8,7 @@ interface GenerateCardOptions {
 
 declare global {
     interface Window {
-        canvasResult: string | null;
+        html2canvas: any;
     }
 }
 
@@ -28,611 +28,273 @@ async function getCustomFonts(): Promise<{ name: string; family: string; fileUrl
     }
 }
 
+function getCanvasDimensions(canvasData: any): { width: number; height: number } {
+    if (canvasData.width && canvasData.height) {
+        return { width: canvasData.width, height: canvasData.height };
+    }
+    
+    // Calculate from objects if no explicit dimensions
+    const objects = canvasData.objects || [];
+    let maxRight = 0;
+    let maxBottom = 0;
+    
+    objects.forEach((obj: any) => {
+        const right = (obj.left || 0) + ((obj.width || 0) * (obj.scaleX || 1));
+        const bottom = (obj.top || 0) + ((obj.height || 0) * (obj.scaleY || 1));
+        maxRight = Math.max(maxRight, right);
+        maxBottom = Math.max(maxBottom, bottom);
+    });
+    
+    return { 
+        width: Math.max(maxRight + 40, 400), 
+        height: Math.max(maxBottom + 40, 420) 
+    };
+}
+
+function formatDate(dateStr: string): string {
+    try {
+        return new Date(dateStr).toLocaleDateString('en-US', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric'
+        });
+    } catch (e) {
+        return dateStr || '';
+    }
+}
+
 /**
- * Generate a card image with text replacements only.
- * Image compositing is handled separately by sharp-based image processor.
+ * Generate a card image using HTML-based rendering with puppeteer
+ * This mimics the manual card generation approach for consistent results
  */
 export async function generateCardImage({ template, mapping, newsItem }: GenerateCardOptions): Promise<Buffer> {
-    console.log('[CardGenerator] generateCardImage called');
-    console.log('[CardGenerator] Template ID:', template.id);
-    console.log('[CardGenerator] News item:', newsItem.title?.substring(0, 50));
+    console.log('[CardGenerator] Generating card for:', newsItem.title?.substring(0, 50));
 
     const canvasData = typeof template.canvasData === 'string'
         ? JSON.parse(template.canvasData)
         : template.canvasData;
 
-    const width = canvasData.width || 1200;
-    const height = canvasData.height || 630;
+    const { width, height } = getCanvasDimensions(canvasData);
+    const objects = canvasData.objects || [];
+    const backgroundColor = canvasData.backgroundColor || '#ffffff';
+    const backgroundImage = canvasData.backgroundImage;
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
     const customFonts = await getCustomFonts();
     console.log('[CardGenerator] Custom fonts:', customFonts.length);
 
-    const fontFaceCSS = customFonts.map(font => {
-        return `@font-face {
+    // Build font face CSS
+    const fontFaceCSS = customFonts.map(font => `
+        @font-face {
             font-family: '${font.family}';
             src: url('${font.fileUrl}') format('truetype');
             font-weight: normal;
             font-style: normal;
-        }`;
-    }).join('\n');
+            font-display: swap;
+        }
+    `).join('\n');
 
-    const newsItemJson = JSON.stringify(newsItem);
+    // Process background image URL
+    let bgImageUrl = '';
+    if (backgroundImage?.src) {
+        if (backgroundImage.src.startsWith('data:')) {
+            bgImageUrl = backgroundImage.src;
+        } else {
+            bgImageUrl = `${baseUrl}/api/image-proxy?url=${encodeURIComponent(backgroundImage.src)}`;
+        }
+    }
 
-    const fontFamilies = JSON.stringify(customFonts.map(f => f.family));
+    // Build HTML elements
+    let elementsHTML = '';
+    
+    objects.forEach((obj: any) => {
+        const type = (obj.type || '').toLowerCase();
+        const dynamicField = obj.dynamicField || 'none';
+        
+        // Calculate position accounting for origin
+        let left = obj.left || 0;
+        let top = obj.top || 0;
+        
+        if (obj.originX === 'center') {
+            left = left - ((obj.width || 0) * (obj.scaleX || 1)) / 2;
+        }
+        if (obj.originY === 'center') {
+            top = top - ((obj.height || 0) * (obj.scaleY || 1)) / 2;
+        }
 
-    const canvasDataJson = JSON.stringify(canvasData);
+        // Handle dynamic text replacement
+        let text = obj.text || '';
+        if (dynamicField === 'title') {
+            text = newsItem.title || '';
+        } else if (dynamicField === 'date') {
+            text = newsItem.date || newsItem.publishedAt ? formatDate(newsItem.date || newsItem.publishedAt) : '';
+        } else if (['description', 'subtitle'].includes(dynamicField)) {
+            text = newsItem.description || '';
+        } else if (dynamicField === 'author') {
+            text = newsItem.author || '';
+        } else if (dynamicField === 'category') {
+            text = newsItem.category || '';
+        }
+
+        if (type === 'itext' || type === 'text' || type === 'i-text') {
+            const objWidth = (obj.width || 200) * (obj.scaleX || 1);
+            const objHeight = (obj.height || 50) * (obj.scaleY || 1);
+            const fontSize = (obj.fontSize || 24) * (obj.scaleX || 1);
+            const lineHeight = obj.lineHeight || 1.2;
+            
+            elementsHTML += `
+                <div style="
+                    position: absolute;
+                    left: ${left}px;
+                    top: ${top - (fontSize * 0.2)}px;
+                    width: ${objWidth}px;
+                    height: ${objHeight}px;
+                    font-size: ${fontSize}px;
+                    color: ${obj.fill || '#000000'};
+                    font-family: ${obj.fontFamily || 'Arial, sans-serif'};
+                    font-weight: ${obj.fontWeight || 'normal'};
+                    font-style: ${obj.fontStyle || 'normal'};
+                    line-height: ${lineHeight};
+                    white-space: pre-wrap;
+                    word-break: break-word;
+                    text-align: ${obj.textAlign || 'left'};
+                    text-decoration: ${obj.underline ? 'underline' : obj.linethrough ? 'line-through' : 'none'};
+                    padding: 0;
+                    margin: 0;
+                    overflow: hidden;
+                ">${text}</div>
+            `;
+        } else if (type === 'rect') {
+            const rectWidth = (obj.width || 100) * (obj.scaleX || 1);
+            const rectHeight = (obj.height || 100) * (obj.scaleY || 1);
+            const borderRadius = (obj.rx || 0) > 0 ? `${(obj.rx || 0) * (obj.scaleX || 1)}px` : '0';
+            
+            if (dynamicField === 'image' && newsItem.image) {
+                // Image replacement
+                elementsHTML += `
+                    <img src="${baseUrl}/api/image-proxy?url=${encodeURIComponent(newsItem.image)}" 
+                         style="
+                            position: absolute;
+                            left: ${left}px;
+                            top: ${top}px;
+                            width: ${rectWidth}px;
+                            height: ${rectHeight}px;
+                            object-fit: cover;
+                            border-radius: ${borderRadius};
+                         "
+                         crossorigin="anonymous"
+                    />
+                `;
+            } else {
+                // Regular rectangle
+                elementsHTML += `
+                    <div style="
+                        position: absolute;
+                        left: ${left}px;
+                        top: ${top}px;
+                        width: ${rectWidth}px;
+                        height: ${rectHeight}px;
+                        background-color: ${obj.fill || 'transparent'};
+                        border: ${obj.strokeWidth > 0 ? `${Math.max(1, (obj.strokeWidth || 1) * (obj.scaleX || 1))}px solid ${obj.stroke || '#000000'}` : 'none'};
+                        border-radius: ${borderRadius};
+                    "></div>
+                `;
+            }
+        } else if (type === 'circle') {
+            const radius = (obj.radius || 25) * (obj.scaleX || 1);
+            
+            if (dynamicField === 'image' && newsItem.image) {
+                // Circle image replacement
+                elementsHTML += `
+                    <img src="${baseUrl}/api/image-proxy?url=${encodeURIComponent(newsItem.image)}" 
+                         style="
+                            position: absolute;
+                            left: ${left - radius}px;
+                            top: ${top - radius}px;
+                            width: ${radius * 2}px;
+                            height: ${radius * 2}px;
+                            object-fit: cover;
+                            border-radius: 50%;
+                         "
+                         crossorigin="anonymous"
+                    />
+                `;
+            } else {
+                // Regular circle
+                elementsHTML += `
+                    <div style="
+                        position: absolute;
+                        left: ${left - radius}px;
+                        top: ${top - radius}px;
+                        width: ${radius * 2}px;
+                        height: ${radius * 2}px;
+                        background-color: ${obj.fill || '#e0e0e0'};
+                        border: ${obj.strokeWidth > 0 ? `${obj.strokeWidth}px solid ${obj.stroke || '#000000'}` : 'none'};
+                        border-radius: 50%;
+                    "></div>
+                `;
+            }
+        } else if (type === 'image' || type === 'fabric-image') {
+            const imgWidth = (obj.width || 100) * (obj.scaleX || 1);
+            const imgHeight = (obj.height || 100) * (obj.scaleY || 1);
+            const imageSrc = obj._imageSrc || obj.src;
+            
+            if (imageSrc) {
+                let src = imageSrc;
+                if (!imageSrc.startsWith('data:')) {
+                    src = `${baseUrl}/api/image-proxy?url=${encodeURIComponent(imageSrc)}`;
+                }
+                
+                elementsHTML += `
+                    <img src="${src}" 
+                         style="
+                            position: absolute;
+                            left: ${left}px;
+                            top: ${top}px;
+                            width: ${imgWidth}px;
+                            height: ${imgHeight}px;
+                            object-fit: cover;
+                         "
+                         crossorigin="anonymous"
+                    />
+                `;
+            }
+        }
+    });
 
     const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js" onerror="console.error('Fabric.js failed to load')"></script>
     <style>
         ${fontFaceCSS}
-        body { margin: 0; padding: 0; }
-        canvas { max-width: 100%; height: auto; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            width: ${width}px; 
+            height: ${height}px; 
+            overflow: hidden;
+            background-color: ${backgroundColor};
+            ${bgImageUrl ? `
+            background-image: url('${bgImageUrl}');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            ` : ''}
+        }
     </style>
 </head>
 <body>
-    <canvas id="canvas"></canvas>
-    <script>
-        // Global error handler
-        window.onerror = function(msg, url, line, col, error) {
-            console.error('[CardGenerator] JavaScript Error:', msg, 'at', url, 'line', line);
-            return false;
-        };
-
-        console.log('[CardGenerator] Script starting...');
-
-        // Check if fabric.js loaded
-        if (typeof fabric === 'undefined') {
-            console.error('[CardGenerator] ERROR: fabric.js not loaded!');
-            window.canvasResult = 'ERROR: fabric.js not loaded';
-        } else {
-            console.log('[CardGenerator] fabric.js loaded successfully');
-        }
-
-        const newsItem = ${newsItemJson};
-        const customFontFamilies = ${fontFamilies};
-        const canvasData = ${canvasDataJson};
-
-        window.canvasResult = null;
-
-        // Font loading and readiness detection
-        function waitForFonts() {
-            console.log('[CardGenerator] waitForFonts called');
-            if ('fonts' in document) {
-                return document.fonts.ready.catch(() => {
-                    console.warn('[CardGenerator] Font loading failed, continuing anyway');
-                });
-            } else {
-                // Fallback for browsers that don't support font loading API
-                console.log('[CardGenerator] Font API not supported, using fallback');
-                return new Promise(resolve => setTimeout(resolve, 500));
-            }
-        }
-
-        // Initialize canvas after fonts are loaded
-        console.log('[CardGenerator] Calling waitForFonts...');
-        waitForFonts().then(() => {
-            console.log('[CardGenerator] Fonts loaded, creating canvas...');
-            const canvas = new fabric.Canvas('canvas', {
-                width: ${width},
-                height: ${height},
-                backgroundColor: '${canvasData.backgroundColor || '#ffffff'}',
-                renderOnAddRemove: false
-            });
-            console.log('[CardGenerator] Canvas created, loading canvasData JSON...');
-
-            // Handle background image - supports any image format (PNG, JPG, WEBP, GIF, etc.)
-            const bgImageData = canvasData.backgroundImage;
-            if (bgImageData && bgImageData.src) {
-                let bgImgUrl = bgImageData.src;
-
-                // Check if image URL is external and needs proxying
-                try {
-                    const urlObj = new URL(bgImageData.src);
-                    // If image is from an external domain, use proxy
-                    if (urlObj.hostname !== window.location.hostname &&
-                        urlObj.hostname !== 'localhost' &&
-                        !urlObj.hostname.endsWith('vercel.app') &&
-                        !urlObj.hostname.endsWith('newsagent.com')) {
-                        bgImgUrl = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(bgImageData.src);
-                    }
-                } catch (e) {
-                    // If URL parsing fails, treat as external and use proxy
-                    bgImgUrl = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(bgImageData.src);
-                }
-
-                console.log('[CardGenerator] Loading background image:', bgImgUrl.substring(0, 100));
-
-                // Create background image with proper scaling (cover mode)
-                fabric.Image.fromURL(bgImgUrl, function(bgImg) {
-                    const canvasWidth = ${width};
-                    const canvasHeight = ${height};
-
-                    // Calculate scale to cover entire canvas
-                    const scaleX = canvasWidth / bgImg.width;
-                    const scaleY = canvasHeight / bgImg.height;
-                    const scale = Math.max(scaleX, scaleY);
-
-                    // Calculate position to center
-                    const scaledWidth = bgImg.width * scale;
-                    const scaledHeight = bgImg.height * scale;
-                    const left = (canvasWidth - scaledWidth) / 2;
-                    const top = (canvasHeight - scaledHeight) / 2;
-
-                    canvas.setBackgroundImage(bgImg, canvas.renderAll.bind(canvas), {
-                        scaleX: scale,
-                        scaleY: scale,
-                        left: left,
-                        top: top,
-                        originX: 'left',
-                        originY: 'top',
-                    });
-                    console.log('[CardGenerator] Background image loaded:', {
-                        originalSize: bgImg.width + 'x' + bgImg.height,
-                        scaledSize: scaledWidth.toFixed(0) + 'x' + scaledHeight.toFixed(0)
-                    });
-                });
-            } else {
-                canvas.backgroundColor = '${canvasData.backgroundColor || '#ffffff'}';
-            }
-
-            console.log('[CardGenerator] Calling loadFromJSON...');
-            canvas.loadFromJSON(canvasData, function() {
-                console.log('[CardGenerator] Canvas loaded, objects:', canvas.getObjects().length);
-
-                // Restore image objects from saved src
-                const loadedObjects = canvas.getObjects()
-                loadedObjects.forEach(function(obj, idx) {
-                    const dynamicField = obj.dynamicField;
-
-                    // Restore image objects
-                    if ((obj.type === 'image' || obj.type === 'fabric-image' || obj.type === 'Image') && obj._imageSrc) {
-                        // Check if image URL is external and needs proxying
-                        let imageSrc = obj._imageSrc;
-                        try {
-                            const urlObj = new URL(obj._imageSrc);
-                            // If image is from an external domain, use proxy
-                            if (urlObj.hostname !== window.location.hostname &&
-                                urlObj.hostname !== 'localhost' &&
-                                !urlObj.hostname.endsWith('vercel.app') &&
-                                !urlObj.hostname.endsWith('newsagent.com')) {
-                                imageSrc = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(obj._imageSrc);
-                            }
-                        } catch (e) {
-                            // If URL parsing fails, treat as external and use proxy
-                            imageSrc = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(obj._imageSrc);
-                        }
-
-                        console.log('[CardGenerator] Restoring image object from src:', imageSrc.substring(0, 100))
-                            fabric.Image.fromURL(imageSrc, function(newImg) {
-                            newImg.set({
-                                left: obj.left,
-                                top: obj.top,
-                                scaleX: obj.scaleX || 1,
-                                scaleY: obj.scaleY || 1,
-                                angle: obj.angle || 0,
-                                originX: obj.originX || 'left',
-                                originY: obj.originY || 'top',
-                            })
-                            const objIndex = canvas.getObjects().indexOf(obj)
-                            canvas.remove(obj)
-                            canvas.add(newImg)
-                            canvas.renderAll()
-                            console.log('[CardGenerator] Image object restored')
-                        })
-                    }
-
-                    if (dynamicField && dynamicField !== 'none' && dynamicField !== 'image') {
-                        const newValue = newsItem[dynamicField];
-                        if (newValue && (obj.type === 'i-text' || obj.type === 'text' || obj.type === 'IText')) {
-                            // Store original position BEFORE any changes
-                            const originalLeft = obj.left;
-                            const originalTop = obj.top;
-                            const originalFontSize = obj.fontSize;
-                            const originalOriginX = obj.originX || 'left';
-                            const originalOriginY = obj.originY || 'top';
-
-                            console.log('BEFORE update:', { left: originalLeft, top: originalTop, fontSize: originalFontSize });
-
-                            // Update text content
-                            obj.set('text', String(newValue));
-
-                            // Apply proper text configuration for consistent rendering
-                            // Set originY to 'top' to match HTML/CSS behavior
-                            obj.set({
-                                originX: originalOriginX,  // Preserve original originX
-                                originY: 'top',  // Use top as origin to match HTML/CSS rendering
-                                textAlign: obj.textAlign || 'left'
-                            });
-
-                            // Force recalculation of text dimensions
-                            obj.initDimensions();
-
-                            // Important: preserve original positioning after text change
-                            // Compensate for any baseline shifts by using the original position
-                            obj.set({
-                                left: originalLeft,
-                                top: originalTop,
-                                originX: originalOriginX,
-                                originY: 'top'  // Consistently use top origin
-                            });
-
-                            // Update coordinates after position adjustment
-                            obj.setCoords();
-
-                            console.log('AFTER update:', {
-                                left: obj.left,
-                                top: obj.top,
-                                fontSize: obj.fontSize
-                            });
-                            console.log('Updated text: ' + dynamicField + ' = ' + String(newValue).substring(0, 50));
-                        }
-                    }
-
-                    if (obj.fontFamily && customFontFamilies.includes(obj.fontFamily)) {
-                        console.log('Using custom font:', obj.fontFamily);
-                    }
-                });
-
-                // Perform final layout calculations and renders
-                canvas.calcOffset();
-                canvas.renderAll();
-
-                // Ensure all objects are properly positioned and rendered
-                canvas.getObjects().forEach(obj => {
-                    obj.setCoords();
-                });
-                canvas.renderAll();
-
-                // Handle image replacement in rectangles marked as dynamicField='image'
-                const objectsForImageReplacement = canvas.getObjects();
-                let imageReplaced = false;
-
-                for (let i = 0; i < objectsForImageReplacement.length; i++) {
-                    const obj = objectsForImageReplacement[i];
-                    const dynamicField = obj.dynamicField;
-
-                    if (obj.type.toLowerCase() === 'rect' && dynamicField === 'image' && newsItem.image) {
-                        // Check if image URL is external and needs proxying
-                        let imageUrl = newsItem.image;
-                        try {
-                            const urlObj = new URL(newsItem.image);
-                            // If image is from an external domain, use proxy
-                            if (urlObj.hostname !== window.location.hostname &&
-                                urlObj.hostname !== 'localhost' &&
-                                !urlObj.hostname.endsWith('vercel.app') &&
-                                !urlObj.hostname.endsWith('newsagent.com')) {
-                                imageUrl = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(newsItem.image);
-                            }
-                        } catch (e) {
-                            // If URL parsing fails, treat as external and use proxy
-                            imageUrl = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(newsItem.image);
-                        }
-
-                        // Create a new image object to replace rectangle
-                        fabric.Image.fromURL(imageUrl, function(img) {
-                            // Scale the image to fit the rectangle while maintaining aspect ratio
-                            const scaleX = obj.width / img.width;
-                            const scaleY = obj.height / img.height;
-                            const scale = Math.min(scaleX, scaleY); // Maintain aspect ratio
-
-                            img.set({
-                                left: obj.left,
-                                top: obj.top,
-                                scaleX: scale,
-                                scaleY: scale,
-                                originX: obj.originX || 'left',
-                                originY: obj.originY || 'top',
-                            });
-
-                            canvas.remove(obj);
-                            canvas.add(img);
-                            canvas.renderAll();
-                            imageReplaced = true;
-                        }, {
-                            crossOrigin: 'anonymous'
-                        });
-                    }
-                    }
-
-                // Use requestAnimationFrame to ensure render completion
-                requestAnimationFrame(() => {
-                    canvas.requestRenderAll();
-
-                    // Use another rAF to ensure everything is settled
-                    requestAnimationFrame(() => {
-                        canvas.requestRenderAll();
-
-                        // Capture the image after ensuring all layouts are complete
-                        try {
-                            const dataUrl = canvas.toDataURL({
-                                format: 'png',
-                                multiplier: 1
-                            });
-                            console.log('[CardGenerator] Data URL generated:', dataUrl.length);
-                            window.canvasResult = dataUrl;
-                        } catch (err) {
-                            console.error('[CardGenerator] Error generating data URL:', err.message);
-                            window.canvasResult = 'ERROR: ' + err.message;
-                        }
-                    });
-                });
-            });
-        }).catch(error => {
-            console.error('Font loading error:', error);
-            // Proceed with default fonts if custom font loading fails
-            // Initialize canvas after a short delay to ensure fonts are available
-            setTimeout(() => {
-                const canvas = new fabric.Canvas('canvas', {
-                    width: ${width},
-                    height: ${height},
-                    backgroundColor: '${canvasData.backgroundColor || '#ffffff'}',
-                    renderOnAddRemove: false
-                });
-
-                // Continue with the same initialization code as above
-                const bgImageData = canvasData.backgroundImage;
-                if (bgImageData && bgImageData.src) {
-                    let bgImgUrl = bgImageData.src;
-
-                    // Check if image URL is external and needs proxying
-                    try {
-                        const urlObj = new URL(bgImageData.src);
-                        // If image is from an external domain, use proxy
-                        if (urlObj.hostname !== window.location.hostname &&
-                            urlObj.hostname !== 'localhost' &&
-                            !urlObj.hostname.endsWith('vercel.app') &&
-                            !urlObj.hostname.endsWith('newsagent.com')) {
-                            bgImgUrl = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(bgImageData.src);
-                        }
-                    } catch (e) {
-                        // If URL parsing fails, treat as external and use proxy
-                        bgImgUrl = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(bgImageData.src);
-                    }
-
-                    console.log('[CardGenerator] Loading background image:', bgImgUrl.substring(0, 100));
-
-                    fabric.Image.fromURL(bgImgUrl, function(bgImg) {
-                        const canvasWidth = ${width};
-                        const canvasHeight = ${height};
-
-                        const scaleX = canvasWidth / bgImg.width;
-                        const scaleY = canvasHeight / bgImg.height;
-                        const scale = Math.max(scaleX, scaleY);
-
-                        const scaledWidth = bgImg.width * scale;
-                        const scaledHeight = bgImg.height * scale;
-                        const left = (canvasWidth - scaledWidth) / 2;
-                        const top = (canvasHeight - scaledHeight) / 2;
-
-                        canvas.setBackgroundImage(bgImg, canvas.renderAll.bind(canvas), {
-                            scaleX: scale,
-                            scaleY: scale,
-                            left: left,
-                            top: top,
-                            originX: 'left',
-                            originY: 'top',
-                        });
-                    });
-                } else {
-                    canvas.backgroundColor = '${canvasData.backgroundColor || '#ffffff'}';
-                }
-
-                canvas.loadFromJSON(canvasData, function() {
-                    console.log('[CardGenerator] Canvas JSON loaded successfully');
-                    const loadedObjects = canvas.getObjects()
-                    console.log('[CardGenerator] Found', loadedObjects.length, 'objects to process');
-                    loadedObjects.forEach(function(obj, idx) {
-                        const dynamicField = obj.dynamicField;
-
-                        if ((obj.type === 'image' || obj.type === 'fabric-image' || obj.type === 'Image') && obj._imageSrc) {
-                            // Check if image URL is external and needs proxying
-                            let imageSrc = obj._imageSrc;
-                            try {
-                                const urlObj = new URL(obj._imageSrc);
-                                // If image is from an external domain, use proxy
-                                if (urlObj.hostname !== window.location.hostname &&
-                                    urlObj.hostname !== 'localhost' &&
-                                    !urlObj.hostname.endsWith('vercel.app') &&
-                                    !urlObj.hostname.endsWith('newsagent.com')) {
-                                    imageSrc = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(obj._imageSrc);
-                                }
-                            } catch (e) {
-                                // If URL parsing fails, treat as external and use proxy
-                                imageSrc = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(obj._imageSrc);
-                            }
-
-                        fabric.Image.fromURL(imageSrc, function(newImg) {
-                                newImg.set({
-                                    left: obj.left,
-                                    top: obj.top,
-                                    scaleX: obj.scaleX || 1,
-                                    scaleY: obj.scaleY || 1,
-                                    angle: obj.angle || 0,
-                                    originX: obj.originX || 'left',
-                                    originY: obj.originY || 'top',
-                                })
-                                const objIndex = canvas.getObjects().indexOf(obj)
-                                canvas.remove(obj)
-                                canvas.add(newImg)
-                                canvas.renderAll()
-                            })
-                        }
-
-                        if (dynamicField && dynamicField !== 'none' && dynamicField !== 'image') {
-                            const newValue = newsItem[dynamicField];
-                            if (newValue && (obj.type === 'i-text' || obj.type === 'text' || obj.type === 'IText')) {
-                                const originalLeft = obj.left;
-                                const originalOriginX = obj.originX || 'left';
-                                const originalOriginY = obj.originY || 'top';
-
-                                // Calculate original visual position before changing text
-                                const originalTop = obj.top;
-
-                                obj.set('text', String(newValue));
-
-                                // Apply proper text configuration for consistent rendering
-                                // Set originY to 'top' to match HTML/CSS behavior
-                                obj.set({
-                                    originX: originalOriginX,  // Preserve original originX
-                                    originY: 'top',  // Use top as origin to match HTML/CSS rendering
-                                    textAlign: obj.textAlign || 'left'
-                                });
-
-                                // Force recalculation of text dimensions
-                                obj.initDimensions();
-
-                                // Important: preserve original positioning after text change
-                                // Compensate for any baseline shifts by using the original position
-                                obj.set({
-                                    left: originalLeft,
-                                    top: originalTop,
-                                    originX: originalOriginX,
-                                    originY: 'top'  // Consistently use top origin
-                                });
-
-                                // Update coordinates after position adjustment
-                                obj.setCoords();
-                            }
-                        }
-
-                        if (obj.fontFamily && customFontFamilies.includes(obj.fontFamily)) {
-                            console.log('Using custom font:', obj.fontFamily);
-                        }
-                    });
-
-                    // Perform final layout calculations and renders
-                    canvas.calcOffset();
-                    canvas.renderAll();
-
-                    // Ensure all objects are properly positioned and rendered
-                    canvas.getObjects().forEach(obj => {
-                        obj.setCoords();
-                    });
-                    canvas.renderAll();
-
-                    // Handle image replacement in rectangles marked as dynamicField='image'
-                    const objectsForImageReplacement = canvas.getObjects();
-                    const imagePromises = [];
-
-                    for (let i = 0; i < objectsForImageReplacement.length; i++) {
-                        const obj = objectsForImageReplacement[i];
-                        const dynamicField = obj.dynamicField;
-
-                        if (obj.type.toLowerCase() === 'rect' && dynamicField === 'image' && newsItem.image) {
-                            // Check if image URL is external and needs proxying
-                            let imageUrl = newsItem.image;
-                            try {
-                                const urlObj = new URL(newsItem.image);
-                                // If image is from an external domain, use proxy
-                                if (urlObj.hostname !== window.location.hostname &&
-                                    urlObj.hostname !== 'localhost' &&
-                                    !urlObj.hostname.endsWith('vercel.app') &&
-                                    !urlObj.hostname.endsWith('newsagent.com')) {
-                                    imageUrl = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(newsItem.image);
-                                }
-                            } catch (e) {
-                                // If URL parsing fails, treat as external and use proxy
-                                imageUrl = window.location.origin + '/api/image-proxy?url=' + encodeURIComponent(newsItem.image);
-                            }
-
-                            // Create a promise for each image replacement
-                            const imagePromise = new Promise((resolve) => {
-                                // Create a new image object to replace rectangle
-                                fabric.Image.fromURL(imageUrl, function(img) {
-                                    // Scale the image to fit the rectangle while maintaining aspect ratio
-                                    const scaleX = obj.width / img.width;
-                                    const scaleY = obj.height / img.height;
-                                    const scale = Math.min(scaleX, scaleY); // Maintain aspect ratio
-
-                                    img.set({
-                                        left: obj.left,
-                                        top: obj.top,
-                                        scaleX: scale,
-                                        scaleY: scale,
-                                        originX: obj.originX || 'left',
-                                        originY: obj.originY || 'top',
-                                    });
-
-                                    canvas.remove(obj);
-                                    canvas.add(img);
-                                    canvas.renderAll();
-                                    resolve(true);
-                                }, {
-                                    crossOrigin: 'anonymous'
-                                });
-                            });
-
-                            imagePromises.push(imagePromise);
-                        }
-                    }
-
-                    // Wait for all image replacements to complete, then render final canvas
-                    Promise.all(imagePromises).then(() => {
-                        // Ensure all objects are properly positioned after image replacements
-                        canvas.getObjects().forEach(obj => {
-                            obj.setCoords();
-                        });
-
-                        canvas.renderAll();
-
-                        // Use multiple requestAnimationFrame calls to ensure everything is settled
-                        requestAnimationFrame(() => {
-                            canvas.requestRenderAll();
-
-                            requestAnimationFrame(() => {
-                                canvas.requestRenderAll();
-
-                                try {
-                                    const dataUrl = canvas.toDataURL({
-                                        format: 'png',
-                                        multiplier: 1
-                                    });
-                                    window.canvasResult = dataUrl;
-                                } catch (err) {
-                                    console.error('[CardGenerator] Error converting canvas to dataURL:', err.message);
-                                    window.canvasResult = 'ERROR: Failed to convert canvas to image: ' + err.message;
-                                }
-                            });
-                        });
-                    }).catch(function(err) {
-                        console.error('[CardGenerator] Error in image promise chain:', err.message);
-                        // Try to render anyway with whatever we have
-                        try {
-                            canvas.renderAll();
-                            const dataUrl = canvas.toDataURL({
-                                format: 'png',
-                                multiplier: 1
-                            });
-                            window.canvasResult = dataUrl;
-                        } catch (fallbackErr) {
-                            console.error('[CardGenerator] Fallback also failed:', fallbackErr.message);
-                            window.canvasResult = 'ERROR: Canvas rendering failed: ' + err.message + ' | Fallback: ' + fallbackErr.message;
-                        }
-                    });
-                }, function(err) {
-                    // loadFromJSON error callback
-                    console.error('[CardGenerator] Error loading canvas JSON:', err.message);
-                    window.canvasResult = 'ERROR: Failed to load canvas JSON: ' + err.message;
-                });
-            }, 500);
-        });
-    </script>
+    ${elementsHTML}
 </body>
 </html>`;
 
     // Save HTML for debugging
     const fs = require('fs');
     fs.writeFileSync('./debug-card-gen.html', htmlContent);
-    console.log('[CardGenerator] Saved HTML to debug-card-gen.html for debugging');
 
     let browser = null;
     try {
         browser = await puppeteer.launch({
             headless: true,
-            // Use executablePath that works in different environments
             ...(process.env.PUPPETEER_EXECUTABLE_PATH && { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH }),
             args: [
                 '--no-sandbox',
@@ -641,66 +303,26 @@ export async function generateCardImage({ template, mapping, newsItem }: Generat
                 '--disable-gpu',
                 '--disable-features=VizDisplayCompositor',
                 '--force-device-scale-factor=1',
-                '--disable-features=TranslateUI',
-                '--disable-extensions',
-                '--disable-background-timer-throttling',
-                '--disable-backgrounding-occluded-windows',
-                '--disable-renderer-backgrounding',
-                '--disable-features=VizDisplayCompositor'
             ],
-            // Add fallback options if executable path is not found
-            ...(process.env.NODE_ENV === 'development' && {
-                headless: 'shell' // Use shell mode in development for better compatibility
-            })
         });
 
         const page = await browser.newPage();
-
-        // Capture console logs from page
-        page.on('console', msg => console.log('PAGE LOG:', msg.text()));
-
-        // Capture page errors
-        page.on('pageerror', (error: any) => {
-            console.error('PAGE ERROR:', error?.message || 'Unknown error');
-        });
-
-        // Capture request failures
-        page.on('requestfailed', request => {
-            console.error('REQUEST FAILED:', request.url(), request.failure()?.errorText);
-        });
-
+        await page.setViewport({ width, height, deviceScaleFactor: 1 });
         await page.setContent(htmlContent, { waitUntil: 'networkidle0', timeout: 30000 });
 
-        // Safety timeout: if canvasResult is not set within 35 seconds, set an error
-        const safetyTimeout = setTimeout(() => {
-            if (typeof window !== 'undefined' && !window.canvasResult) {
-                console.error('[CardGenerator] Safety timeout reached, canvas rendering took too long');
-                page.evaluate(() => {
-                    window.canvasResult = 'ERROR: Rendering timeout - canvas did not complete within 35 seconds';
-                });
-            }
-        }, 35000);
+        // Wait for fonts to load
+        await page.evaluate(() => document.fonts.ready);
+        
+        // Small delay to ensure rendering is complete
+        await new Promise(resolve => setTimeout(resolve, 500));
 
-        // Wait for the canvas result (40 second timeout to account for longer rendering delay)
-        await page.waitForFunction(
-            () => window.canvasResult !== null,
-            { timeout: 40000 }
-        );
+        // Take screenshot
+        const screenshot = await page.screenshot({
+            type: 'png',
+            fullPage: false,
+        });
 
-        clearTimeout(safetyTimeout);
-
-        const result = await page.evaluate(() => window.canvasResult);
-
-        if (result && typeof result === 'string' && result.startsWith('data:image/png;base64,')) {
-            const base64Data = result.split(',')[1];
-            return Buffer.from(base64Data, 'base64');
-        }
-
-        if (result && typeof result === 'string' && result.startsWith('ERROR:')) {
-            throw new Error(result);
-        }
-
-        throw new Error('Failed to generate canvas image');
+        return Buffer.from(screenshot);
     } catch (error) {
         console.error('Error generating card with Puppeteer:', error);
         throw error;

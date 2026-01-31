@@ -18,6 +18,7 @@ interface ArticleData {
   content?: string
   author?: string
   publishedAt?: string
+  date?: string
   image?: string
   category?: string
   link?: string
@@ -151,6 +152,7 @@ export async function runAutopilot(userId: string): Promise<AutopilotResult> {
          content: '',
          author: 'Bangladesh Guardian',
          publishedAt: article.date || new Date().toISOString(),
+         date: article.date || new Date().toISOString(),
          image: article.image,
          category: 'News',
          link: article.link,
